@@ -1,7 +1,8 @@
 import re
 from pathlib import Path
 import anthropic
-from pypdf import PdfReader
+import pymupdf
+from collections import Counter
 
 DATA_DIR = Path(__file__).parent / "data"
 
@@ -10,11 +11,63 @@ def load_corpus(data_dir: Path = DATA_DIR) -> list[dict]:
     """One entry per page. File and page number travel with the text."""
     pages = []
     for pdf_path in sorted(data_dir.glob("*.pdf")):
-        reader = PdfReader(pdf_path)
-        for page_number, page in enumerate(reader.pages, start=1):
-            text = page.extract_text() or ""
+        doc = pymupdf.open(pdf_path)
+        for page_number, page in enumerate(doc, start=1):
+            text = page.get_text()
             pages.append({"file": pdf_path.name, "page": page_number, "text": text})
     return pages
+
+
+HEADING_RATIO = 1.15  # a block this much bigger than body text is a heading
+BOLD_FLAG = 16
+
+
+def page_blocks(page) -> list[dict]:
+    """One dict per text block: its text, its dominant font size, bold or not."""
+    blocks = []
+    for block in page.get_text("dict")["blocks"]:
+        if block["type"] != 0:  # 0 = text, 1 = image
+            continue
+        spans = [s for line in block["lines"] for s in line["spans"]]
+        text = " ".join(s["text"] for s in spans).strip()
+        if not text:
+            continue
+        size = max(s["size"] for s in spans)
+        bold = any(s["flags"] & BOLD_FLAG for s in spans)
+        blocks.append({"text": text, "size": size, "bold": bold})
+    return blocks
+
+
+def chunk_by_heading(file: str, doc) -> list[dict]:
+    """Cut a document into chunks: each starts at a heading, runs to the next."""
+    pages = [(n, page_blocks(p)) for n, p in enumerate(doc, start=1)]
+    sizes = Counter()
+    for _, blocks in pages:
+        for b in blocks:
+            sizes[round(b["size"], 1)] += len(b["text"])
+    body = sizes.most_common(1)[0][0]
+
+    chunks = []
+    current = {"file": file, "page": 1, "heading": "", "text": ""}
+    for page_number, blocks in pages:
+        for b in blocks:
+            is_heading = (b["size"] > body * HEADING_RATIO or b["bold"]) and len(
+                b["text"]
+            ) < 120
+            if is_heading:
+                if current["text"]:
+                    chunks.append(current)
+                current = {
+                    "file": file,
+                    "page": page_number,
+                    "heading": b["text"],
+                    "text": "",
+                }
+            else:
+                current["text"] += b["text"] + "\n"
+    if current["text"]:
+        chunks.append(current)
+    return chunks
 
 
 def search_policies(query: str, corpus: list[dict], top_k: int = 3) -> str:
