@@ -67,7 +67,25 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
                 current["text"] += b["text"] + "\n"
     if current["text"]:
         chunks.append(current)
-    return chunks
+    return [piece for c in chunks for piece in split_long(c)]
+
+
+MAX_CHUNK_CHARS = 1500  # ~375 tokens
+
+
+def split_long(chunk: dict) -> list[dict]:
+    """Split a chunk over the cap into pieces at paragraph breaks. Same heading on each."""
+    if len(chunk["text"]) <= MAX_CHUNK_CHARS:
+        return [chunk]
+    pieces, buf = [], ""
+    for para in chunk["text"].split("\n"):
+        if buf and len(buf) + len(para) > MAX_CHUNK_CHARS:
+            pieces.append({**chunk, "text": buf})
+            buf = ""
+        buf += para + "\n"
+    if buf.strip():
+        pieces.append({**chunk, "text": buf})
+    return pieces
 
 
 def search_policies(query: str, corpus: list[dict], top_k: int = 3) -> str:
