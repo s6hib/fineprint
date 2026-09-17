@@ -105,7 +105,7 @@ def search_policies(query: str, corpus: list[dict], top_k: int = 3) -> str:
 TOOLS = [
     {
         "name": "search_policies",
-        "description": "Search UnitedHealthcare commercial medical policy PDFs. Returns the top matching pages, each tagged [file p.N].",
+        "description": "Search UnitedHealthcare commercial medical policy PDFs. Returns the top matching pages, each tagged [filename.pdf p.N].",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -118,8 +118,10 @@ TOOLS = [
 
 SYSTEM = (
     "You answer questions about UnitedHealthcare medical policies using only the "
-    "search_policies tool. Every claim must cite its source as [file p.N]. "
-    "If the pages don't answer the question, say so."
+    "search_policies tool. Every claim must cite its source with the exact tag "
+    "that heads the chunk, for example [uhc-example-policy.pdf p.3]. "
+    "Never write the word 'file' in a citation. "
+    "If the chunks don't answer the question, say so."
 )
 
 MODEL = "claude-haiku-4-5-20251001"
