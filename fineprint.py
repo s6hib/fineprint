@@ -3,6 +3,7 @@ from pathlib import Path
 import anthropic
 import pymupdf
 from collections import Counter
+import sqlite3
 
 pymupdf.no_recommend_layout()  # stop the pymupdf_layout hint on every run
 
@@ -121,6 +122,30 @@ def split_long(chunk: dict) -> list[dict]:
     if buf.strip():
         pieces.append({**chunk, "text": buf})
     return pieces
+
+
+def build_index(chunks: list[dict]) -> sqlite3.Connection:
+    """In-memory FTS5 table over the chunks. rowid = the chunk's position in the list."""
+    db = sqlite3.connect(":memory:")
+    db.execute("create virtual table chunks using fts5(heading, text)")
+    db.executemany(
+        "insert into chunks(rowid, heading, text) values (?, ?, ?)",
+        [(i, c["heading"], c["text"]) for i, c in enumerate(chunks)],
+    )
+    return db
+
+
+def keyword_search(query: str, db: sqlite3.Connection, top_k: int = 3) -> list[int]:
+    """BM25 over the index. Returns chunk positions, best first."""
+    terms = re.findall(r"\w+", query)
+    match = " OR ".join(
+        f'"{t}"' for t in terms
+    )  # quoted: codes stay whole, AND/OR/NOT stay words
+    rows = db.execute(
+        "select rowid from chunks where chunks match ? order by rank limit ?",
+        (match, top_k),
+    )
+    return [rowid for (rowid,) in rows]
 
 
 def search_policies(query: str, corpus: list[dict], top_k: int = 3) -> str:
