@@ -4,6 +4,8 @@ import anthropic
 import pymupdf
 from collections import Counter
 
+pymupdf.no_recommend_layout()  # stop the pymupdf_layout hint on every run
+
 DATA_DIR = Path(__file__).parent / "data"
 
 
