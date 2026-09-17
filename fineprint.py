@@ -8,14 +8,12 @@ DATA_DIR = Path(__file__).parent / "data"
 
 
 def load_corpus(data_dir: Path = DATA_DIR) -> list[dict]:
-    """One entry per page. File and page number travel with the text."""
-    pages = []
+    """One entry per chunk. File, page and heading travel with the text."""
+    chunks = []
     for pdf_path in sorted(data_dir.glob("*.pdf")):
         doc = pymupdf.open(pdf_path)
-        for page_number, page in enumerate(doc, start=1):
-            text = page.get_text()
-            pages.append({"file": pdf_path.name, "page": page_number, "text": text})
-    return pages
+        chunks.extend(chunk_by_heading(pdf_path.name, doc))
+    return chunks
 
 
 HEADING_RATIO = 1.15  # a block this much bigger than body text is a heading
@@ -124,7 +122,7 @@ SYSTEM = (
     "If the pages don't answer the question, say so."
 )
 
-MODEL = "claude-sonnet-5"
+MODEL = "claude-haiku-4-5-20251001"
 MAX_TURNS = 6
 
 
