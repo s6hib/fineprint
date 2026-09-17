@@ -13,6 +13,7 @@ def load_corpus(data_dir: Path = DATA_DIR) -> list[dict]:
     for pdf_path in sorted(data_dir.glob("*.pdf")):
         doc = pymupdf.open(pdf_path)
         chunks.extend(chunk_by_heading(pdf_path.name, doc))
+        chunks.extend(table_chunks(pdf_path.name, doc))
     return chunks
 
 
@@ -66,6 +67,30 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
     if current["text"]:
         chunks.append(current)
     return [piece for c in chunks for piece in split_long(c)]
+
+
+def table_chunks(file: str, doc) -> list[dict]:
+    """One chunk per table. Each row becomes one line: cell | cell | cell."""
+    chunks = []
+    for page_number, page in enumerate(doc, start=1):
+        for table in page.find_tables().tables:
+            rows = table.extract()  # list of rows, each a list of cell strings or None
+            lines = [
+                " | ".join(cell.strip() for cell in row if cell and cell.strip())
+                for row in rows
+                if any(cell for cell in row)
+            ]
+            if not lines:
+                continue
+            chunks.append(
+                {
+                    "file": file,
+                    "page": page_number,
+                    "heading": lines[0],
+                    "text": "\n".join(lines),
+                }
+            )
+    return chunks
 
 
 MAX_CHUNK_CHARS = 1500  # ~375 tokens
