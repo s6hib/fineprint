@@ -148,20 +148,18 @@ def keyword_search(query: str, db: sqlite3.Connection, top_k: int = 3) -> list[i
     return [rowid for (rowid,) in rows]
 
 
-def search_policies(query: str, corpus: list[dict], top_k: int = 3) -> str:
-    """Keyword search: score each page by how many query words appear in it."""
-    words = [w for w in re.findall(r"\w+", query.lower()) if len(w) > 2]
-    scored = []
-    for page in corpus:
-        lowered = page["text"].lower()
-        score = sum(lowered.count(w) for w in words)
-        if score > 0:
-            scored.append((score, page))
-    scored.sort(key=lambda pair: pair[0], reverse=True)
-    hits = [
-        f"[{p['file']} p.{p['page']}]\n{p['text'][:4000]}" for _, p in scored[:top_k]
-    ]
-    return "\n\n---\n\n".join(hits) if hits else "No matching pages."
+def search_policies(
+    query: str, corpus: list[dict], db: sqlite3.Connection, top_k: int = 3
+) -> str:
+    """The tool the model calls. Runs the search, tags each hit with its [file p.N]."""
+    hits = [corpus[i] for i in keyword_search(query, db, top_k)]
+    return (
+        "\n\n---\n\n".join(
+            f"[{c['file']} p.{c['page']}]\n{c['heading']}\n{c['text'][:4000]}"
+            for c in hits
+        )
+        or "No matching chunks."
+    )
 
 
 TOOLS = [
@@ -193,6 +191,7 @@ MAX_TURNS = 6
 def run_agent(question: str, corpus: list[dict]) -> str:
     client = anthropic.Anthropic()
     messages = [{"role": "user", "content": question}]
+    db = build_index(corpus)
 
     for _ in range(MAX_TURNS):
         response = client.messages.create(
@@ -211,7 +210,7 @@ def run_agent(question: str, corpus: list[dict]) -> str:
         for block in response.content:
             if block.type == "tool_use":
                 print(f"  -> {block.name}({block.input})")
-                output = search_policies(block.input["query"], corpus)
+                output = search_policies(block.input["query"], corpus, db)
                 results.append(
                     {"type": "tool_result", "tool_use_id": block.id, "content": output}
                 )
