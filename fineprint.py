@@ -20,11 +20,21 @@ def load_corpus(data_dir: Path = DATA_DIR) -> list[dict]:
 HEADING_RATIO = 1.15  # a block this much bigger than body text is a heading
 BOLD_FLAG = 16
 
+MIN_CHARS_PER_PAGE = 50  # less than this and the page is a scan, not text
+
+
+def ocr_textpage(page):
+    """OCR a page that is an image with nothing under it. None means use the text layer."""
+    if len(page.get_text().strip()) >= MIN_CHARS_PER_PAGE or not page.get_images():
+        return None
+    print(f"  ocr: {page.parent.name} p.{page.number + 1}")
+    return page.get_textpage_ocr(language="eng", dpi=300, full=True)
+
 
 def page_blocks(page) -> list[dict]:
     """One dict per text block: its text, its dominant font size, bold or not."""
     blocks = []
-    for block in page.get_text("dict")["blocks"]:
+    for block in page.get_text("dict", textpage=ocr_textpage(page))["blocks"]:
         if block["type"] != 0:  # 0 = text, 1 = image
             continue
         spans = [s for line in block["lines"] for s in line["spans"]]
