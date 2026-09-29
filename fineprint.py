@@ -4,19 +4,35 @@ import anthropic
 import pymupdf
 from collections import Counter
 import sqlite3
+from pydantic import BaseModel
 
 pymupdf.no_recommend_layout()  # stop the pymupdf_layout hint on every run
 
 DATA_DIR = Path(__file__).parent / "data"
 
 
+class PolicyMeta(BaseModel):
+    """What page 1 of a policy says about itself."""
+
+    payer: str
+    title: str
+    policy_number: str
+    effective_date: str
+
+
 def load_corpus(data_dir: Path = DATA_DIR) -> list[dict]:
-    """One entry per chunk. File, page and heading travel with the text."""
+    """One entry per chunk. File, page, heading and policy metadata travel with the text."""
     chunks = []
     for pdf_path in sorted(data_dir.glob("*.pdf")):
         doc = pymupdf.open(pdf_path)
-        chunks.extend(chunk_by_heading(pdf_path.name, doc))
-        chunks.extend(table_chunks(pdf_path.name, doc))
+        first = doc[0]
+        meta = extract_metadata(first.get_text(textpage=ocr_textpage(first)))
+        doc_chunks = chunk_by_heading(pdf_path.name, doc) + table_chunks(
+            pdf_path.name, doc
+        )
+        for chunk in doc_chunks:
+            chunk.update(meta.model_dump())
+        chunks.extend(doc_chunks)
     return chunks
 
 
@@ -185,6 +201,25 @@ SYSTEM = (
 )
 
 MODEL = "claude-haiku-4-5-20251001"
+
+
+def extract_metadata(text: str) -> PolicyMeta:
+    """Ask the model for payer, title, policy number and effective date from page 1."""
+    client = anthropic.Anthropic()
+    response = client.messages.parse(
+        model=MODEL,
+        max_tokens=300,
+        messages=[
+            {
+                "role": "user",
+                "content": f"Pull the policy metadata from this first page. Give effective_date as YYYY-MM-DD.\n\n{text}",
+            }
+        ],
+        output_format=PolicyMeta,
+    )
+    return response.parsed_output
+
+
 MAX_TURNS = 6
 
 
