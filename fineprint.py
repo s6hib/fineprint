@@ -78,6 +78,10 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
     chunks = []
     current = {"file": file, "page": 1, "heading": "", "text": ""}
     for page_number, blocks in pages:
+        if current["text"]:
+            chunks.append(current)
+        current = {**current, "page": page_number, "text": ""}
+
         for b in blocks:
             is_heading = (b["size"] > body * HEADING_RATIO or b["bold"]) and len(
                 b["text"]
