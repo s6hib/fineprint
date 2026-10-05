@@ -182,7 +182,9 @@ def search_policies(
     """The tool the model calls. Fuses keyword and vector hits, tags each with its [file p.N]."""
     keyword_hits = keyword_search(query, db, CANDIDATES)
     vector_hits = vector_search(query, vectors, CANDIDATES)
-    hits = [corpus[i] for i in rrf([keyword_hits, vector_hits], top_k)]
+    fused = rrf([keyword_hits, vector_hits], CANDIDATES)
+    hits = [corpus[i] for i in rerank(query, fused, corpus, top_k)]
+
     return (
         "\n\n---\n\n".join(
             f"[{c['file']} p.{c['page']}]\n{c['heading']}\n{c['text'][:4000]}"
@@ -209,6 +211,20 @@ def vector_search(query: str, vectors: list[list[float]], top_k: int = 3) -> lis
 
 
 RRF_K = 60
+
+
+RERANK_MODEL = "rerank-3"
+
+
+def rerank(
+    query: str, candidates: list[int], corpus: list[dict], top_k: int = 3
+) -> list[int]:
+    """Score each candidate chunk against the query with a reranker. Chunk positions, best first."""
+    docs = [f"{corpus[i]['heading']}\n{corpus[i]['text']}" for i in candidates]
+    results = (
+        voyageai.Client().rerank(query, docs, model=RERANK_MODEL, top_k=top_k).results
+    )
+    return [candidates[r.index] for r in results]
 
 
 def rrf(rankings: list[list[int]], top_k: int = 3) -> list[int]:
