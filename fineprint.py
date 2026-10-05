@@ -2,6 +2,7 @@ import re
 from pathlib import Path
 import anthropic
 import pymupdf
+import voyageai
 from collections import Counter
 import sqlite3
 from pydantic import BaseModel
@@ -168,11 +169,20 @@ def keyword_search(query: str, db: sqlite3.Connection, top_k: int = 3) -> list[i
     return [rowid for (rowid,) in rows]
 
 
+CANDIDATES = 10  # how many hits each search hands to the fusion
+
+
 def search_policies(
-    query: str, corpus: list[dict], db: sqlite3.Connection, top_k: int = 3
+    query: str,
+    corpus: list[dict],
+    db: sqlite3.Connection,
+    vectors: list[list[float]],
+    top_k: int = 3,
 ) -> str:
-    """The tool the model calls. Runs the search, tags each hit with its [file p.N]."""
-    hits = [corpus[i] for i in keyword_search(query, db, top_k)]
+    """The tool the model calls. Fuses keyword and vector hits, tags each with its [file p.N]."""
+    keyword_hits = keyword_search(query, db, CANDIDATES)
+    vector_hits = vector_search(query, vectors, CANDIDATES)
+    hits = [corpus[i] for i in rrf([keyword_hits, vector_hits], top_k)]
     return (
         "\n\n---\n\n".join(
             f"[{c['file']} p.{c['page']}]\n{c['heading']}\n{c['text'][:4000]}"
@@ -180,6 +190,34 @@ def search_policies(
         )
         or "No matching chunks."
     )
+
+
+EMBED_MODEL = "voyage-4"
+
+
+def embed(texts: list[str], input_type: str) -> list[list[float]]:
+    """One vector per text. input_type is "document" for chunks, "query" for the question."""
+    client = voyageai.Client()
+    return client.embed(texts, model=EMBED_MODEL, input_type=input_type).embeddings
+
+
+def vector_search(query: str, vectors: list[list[float]], top_k: int = 3) -> list[int]:
+    """Dot product of the query against every chunk vector. Returns chunk positions, best first."""
+    q = embed([query], "query")[0]
+    scores = [sum(a * b for a, b in zip(q, v)) for v in vectors]
+    return sorted(range(len(vectors)), key=lambda i: scores[i], reverse=True)[:top_k]
+
+
+RRF_K = 60
+
+
+def rrf(rankings: list[list[int]], top_k: int = 3) -> list[int]:
+    """Fuse ranked lists: each chunk scores 1/(60 + rank) per list, summed. Best first."""
+    scores = Counter()
+    for ranking in rankings:
+        for rank, i in enumerate(ranking, start=1):
+            scores[i] += 1 / (RRF_K + rank)
+    return [i for i, _ in scores.most_common(top_k)]
 
 
 TOOLS = [
@@ -231,6 +269,7 @@ def run_agent(question: str, corpus: list[dict]) -> str:
     client = anthropic.Anthropic()
     messages = [{"role": "user", "content": question}]
     db = build_index(corpus)
+    vectors = embed([f"{c['heading']}\n{c['text']}" for c in corpus], "document")
 
     for _ in range(MAX_TURNS):
         response = client.messages.create(
@@ -249,7 +288,7 @@ def run_agent(question: str, corpus: list[dict]) -> str:
         for block in response.content:
             if block.type == "tool_use":
                 print(f"  -> {block.name}({block.input})")
-                output = search_policies(block.input["query"], corpus, db)
+                output = search_policies(block.input["query"], corpus, db, vectors)
                 results.append(
                     {"type": "tool_result", "tool_use_id": block.id, "content": output}
                 )
