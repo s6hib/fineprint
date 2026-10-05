@@ -37,8 +37,7 @@ def load_corpus(data_dir: Path = DATA_DIR) -> list[dict]:
     return chunks
 
 
-HEADING_RATIO = 1.15  # a block this much bigger than body text is a heading
-BOLD_FLAG = 16
+HEADING_RATIO = 1.15  # a line this much bigger than body text is a heading
 
 MIN_CHARS_PER_PAGE = 50  # less than this and the page is a scan, not text
 
@@ -51,29 +50,32 @@ def ocr_textpage(page):
     return page.get_textpage_ocr(language="eng", dpi=300, full=True)
 
 
-def page_blocks(page) -> list[dict]:
-    """One dict per text block: its text, its dominant font size, bold or not."""
+def page_lines(page) -> list[list[dict]]:
+    """Text blocks of a page, each a list of lines: the line's text and its largest font size."""
     blocks = []
     for block in page.get_text("dict", textpage=ocr_textpage(page))["blocks"]:
         if block["type"] != 0:  # 0 = text, 1 = image
             continue
-        spans = [s for line in block["lines"] for s in line["spans"]]
-        text = " ".join(s["text"] for s in spans).strip()
-        if not text:
-            continue
-        size = max(s["size"] for s in spans)
-        bold = any(s["flags"] & BOLD_FLAG for s in spans)
-        blocks.append({"text": text, "size": size, "bold": bold})
+        lines = []
+        for line in block["lines"]:
+            text = " ".join(s["text"] for s in line["spans"]).strip()
+            if text:
+                lines.append(
+                    {"text": text, "size": max(s["size"] for s in line["spans"])}
+                )
+        if lines:
+            blocks.append(lines)
     return blocks
 
 
 def chunk_by_heading(file: str, doc) -> list[dict]:
-    """Cut a document into chunks: each starts at a heading, runs to the next."""
-    pages = [(n, page_blocks(p)) for n, p in enumerate(doc, start=1)]
+    """Cut a document into chunks: each starts at a heading line, runs to the next."""
+    pages = [(n, page_lines(p)) for n, p in enumerate(doc, start=1)]
     sizes = Counter()
     for _, blocks in pages:
-        for b in blocks:
-            sizes[round(b["size"], 1)] += len(b["text"])
+        for lines in blocks:
+            for line in lines:
+                sizes[round(line["size"], 1)] += len(line["text"])
     body = sizes.most_common(1)[0][0]
 
     chunks = []
@@ -83,21 +85,23 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
             chunks.append(current)
         current = {**current, "page": page_number, "text": ""}
 
-        for b in blocks:
-            is_heading = (b["size"] > body * HEADING_RATIO or b["bold"]) and len(
-                b["text"]
-            ) < 120
-            if is_heading:
-                if current["text"]:
-                    chunks.append(current)
-                current = {
-                    "file": file,
-                    "page": page_number,
-                    "heading": b["text"],
-                    "text": "",
-                }
-            else:
-                current["text"] += b["text"] + "\n"
+        for lines in blocks:
+            for line in lines:
+                if line["size"] > body * HEADING_RATIO and len(line["text"]) < 120:
+                    if current["text"]:
+                        chunks.append(current)
+                    current = {
+                        "file": file,
+                        "page": page_number,
+                        "heading": line["text"],
+                        "text": "",
+                    }
+                else:
+                    current["text"] += line["text"] + " "
+            if current["text"]:
+                current["text"] = (
+                    current["text"].rstrip() + "\n"
+                )  # a block ends a paragraph
     if current["text"]:
         chunks.append(current)
     return [piece for c in chunks for piece in split_long(c)]
