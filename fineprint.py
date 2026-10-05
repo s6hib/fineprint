@@ -244,11 +244,14 @@ def rrf(rankings: list[list[int]], top_k: int = 3) -> list[int]:
 TOOLS = [
     {
         "name": "search_policies",
-        "description": "Search UnitedHealthcare commercial medical policy PDFs. Returns the top matching pages, each tagged [filename.pdf p.N].",
+        "description": "Search UnitedHealthcare commercial medical policy PDFs by keyword and by meaning. Returns the top matching chunks, each tagged [filename.pdf p.N].",
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "Keywords to search for."}
+                "query": {
+                    "type": "string",
+                    "description": "What to look for: a question, a phrase, or a code such as A0431.",
+                }
             },
             "required": ["query"],
         },
