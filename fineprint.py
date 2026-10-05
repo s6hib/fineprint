@@ -145,13 +145,18 @@ def split_long(chunk: dict) -> list[dict]:
     return pieces
 
 
+def chunk_text(c: dict) -> str:
+    """What gets indexed, embedded and reranked: one line of document context, then the chunk."""
+    return f"{c['payer']} | {c['title']} | {c['policy_number']} | {c['heading']}\n{c['text']}"
+
+
 def build_index(chunks: list[dict]) -> sqlite3.Connection:
     """In-memory FTS5 table over the chunks. rowid = the chunk's position in the list."""
     db = sqlite3.connect(":memory:")
-    db.execute("create virtual table chunks using fts5(heading, text)")
+    db.execute("create virtual table chunks using fts5(text)")
     db.executemany(
-        "insert into chunks(rowid, heading, text) values (?, ?, ?)",
-        [(i, c["heading"], c["text"]) for i, c in enumerate(chunks)],
+        "insert into chunks(rowid, text) values (?, ?)",
+        [(i, chunk_text(c)) for i, c in enumerate(chunks)],
     )
     return db
 
@@ -220,7 +225,7 @@ def rerank(
     query: str, candidates: list[int], corpus: list[dict], top_k: int = 3
 ) -> list[int]:
     """Score each candidate chunk against the query with a reranker. Chunk positions, best first."""
-    docs = [f"{corpus[i]['heading']}\n{corpus[i]['text']}" for i in candidates]
+    docs = [chunk_text(corpus[i]) for i in candidates]
     results = (
         voyageai.Client().rerank(query, docs, model=RERANK_MODEL, top_k=top_k).results
     )
@@ -285,7 +290,7 @@ def run_agent(question: str, corpus: list[dict]) -> str:
     client = anthropic.Anthropic()
     messages = [{"role": "user", "content": question}]
     db = build_index(corpus)
-    vectors = embed([f"{c['heading']}\n{c['text']}" for c in corpus], "document")
+    vectors = embed([chunk_text(c) for c in corpus], "document")
 
     for _ in range(MAX_TURNS):
         response = client.messages.create(
