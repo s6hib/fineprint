@@ -131,15 +131,23 @@ MAX_CHUNK_CHARS = 1500  # ~375 tokens
 
 
 def split_long(chunk: dict) -> list[dict]:
-    """Split a chunk over the cap into pieces at paragraph breaks. Same heading on each."""
+    """Split a chunk over the cap at paragraph breaks, then sentence ends. Same heading on each."""
     if len(chunk["text"]) <= MAX_CHUNK_CHARS:
         return [chunk]
+    units = []
+    for para in chunk["text"].splitlines(keepends=True):
+        if len(para) > MAX_CHUNK_CHARS:
+            units += re.split(
+                r"(?<=\. )", para
+            )  # a paragraph over the cap breaks at sentence ends
+        else:
+            units.append(para)
     pieces, buf = [], ""
-    for para in chunk["text"].split("\n"):
-        if buf and len(buf) + len(para) > MAX_CHUNK_CHARS:
+    for unit in units:
+        if buf and len(buf) + len(unit) > MAX_CHUNK_CHARS:
             pieces.append({**chunk, "text": buf})
             buf = ""
-        buf += para + "\n"
+        buf += unit
     if buf.strip():
         pieces.append({**chunk, "text": buf})
     return pieces
