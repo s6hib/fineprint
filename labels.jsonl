@@ -1,0 +1,50 @@
+{"id": 1, "label": "fail", "why": "says yes with no conditions; drops the required pre-op and psych evaluation (or prep program) on p.2"}
+{"id": 2, "label": "pass", "why": ""}
+{"id": 3, "label": "pass", "why": ""}
+{"id": 4, "label": "pass", "why": ""}
+{"id": 5, "label": "fail", "why": "lists the criteria as complete but drops the fourth: still meets medical necessity at the second stage"}
+{"id": 6, "label": "fail", "why": "core answer right, but gives CPT 43772 (component only); removal of band and all components fits 43774, and the policy names no code for it"}
+{"id": 7, "label": "pass", "why": ""}
+{"id": 8, "label": "pass", "why": ""}
+{"id": 9, "label": "pass", "why": "right age; cites the FDA section p.44, not the coverage rule on p.1"}
+{"id": 10, "label": "fail", "why": "no answer: hit the tool-call limit after 6 searches"}
+{"id": 11, "label": "pass", "why": ""}
+{"id": 12, "label": "pass", "why": ""}
+{"id": 13, "label": "fail", "why": "says coverage is unknown; p.3 lists ESG as unproven and not medically necessary"}
+{"id": 14, "label": "fail", "why": "never gives the policy rule (AHI or RDI of 30+ on polysomnography, p.2); says even mild sleep apnea counts"}
+{"id": 15, "label": "pass", "why": ""}
+{"id": 16, "label": "pass", "why": ""}
+{"id": 17, "label": "pass", "why": ""}
+{"id": 18, "label": "pass", "why": ""}
+{"id": 19, "label": "pass", "why": ""}
+{"id": 20, "label": "pass", "why": ""}
+{"id": 21, "label": "pass", "why": ""}
+{"id": 22, "label": "pass", "why": ""}
+{"id": 23, "label": "pass", "why": ""}
+{"id": 24, "label": "pass", "why": ""}
+{"id": 25, "label": "pass", "why": ""}
+{"id": 26, "label": "fail", "why": "right number, but reports the scan's OCR misread 2026T0070I as a separate related policy"}
+{"id": 27, "label": "pass", "why": ""}
+{"id": 28, "label": "pass", "why": ""}
+{"id": 29, "label": "pass", "why": ""}
+{"id": 30, "label": "fail", "why": "adds that emergency air ambulance needs no prior auth; the policy doesn't say that"}
+{"id": 31, "label": "pass", "why": ""}
+{"id": 32, "label": "pass", "why": ""}
+{"id": 33, "label": "pass", "why": ""}
+{"id": 34, "label": "pass", "why": ""}
+{"id": 35, "label": "pass", "why": ""}
+{"id": 36, "label": "pass", "why": ""}
+{"id": 37, "label": "pass", "why": ""}
+{"id": 38, "label": "pass", "why": ""}
+{"id": 39, "label": "pass", "why": "phase descriptions loosely paraphrased (phase 2 garbled across the page break); coverage answer right"}
+{"id": 40, "label": "pass", "why": ""}
+{"id": 41, "label": "pass", "why": ""}
+{"id": 42, "label": "pass", "why": ""}
+{"id": 43, "label": "pass", "why": ""}
+{"id": 44, "label": "pass", "why": "calls 97129/97130 the covered services; the policy says listing a code doesn't imply coverage"}
+{"id": 45, "label": "pass", "why": ""}
+{"id": 46, "label": "pass", "why": ""}
+{"id": 47, "label": "pass", "why": ""}
+{"id": 48, "label": "pass", "why": ""}
+{"id": 49, "label": "fail", "why": "should have just said it does not have that information"}
+{"id": 50, "label": "pass", "why": "adds an uncited description of 99213; doesn't change the answer"}
