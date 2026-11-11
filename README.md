@@ -32,6 +32,8 @@ The top 10 from each are merged with reciprocal rank fusion, then Voyage `rerank
 
 ## Eval
 
+`make eval` runs the three checks below in order. `make answers` runs the agent on all 50 questions again first, if the code has changed.
+
 `gold.jsonl` holds 50 questions with the answer and the file and pages it lives on: coverage criteria, exclusions, billing codes, definitions, policy metadata, and three questions the corpus can't answer.
 
 ```sh
@@ -67,4 +69,5 @@ uv run citations.py
 | `citations.py` | checks the citations and quotes in the answers |
 | `judge.py` | grades answers with a second model and compares it with the labels |
 | `judgments.jsonl` | the judge's verdicts on the 44 answers it was scored on |
+| `Makefile` | `make eval` and `make answers` |
 | `fetch_data.sh` | downloads the policy PDFs into `data/` (git-ignored) |
