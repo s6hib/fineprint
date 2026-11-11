@@ -1,4 +1,6 @@
 .venv/
 __pycache__/
 data/*.pdf
+index.json
+index.tmp
 .env

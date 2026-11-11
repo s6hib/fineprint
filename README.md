@@ -11,6 +11,8 @@ export ANTHROPIC_API_KEY=... VOYAGE_API_KEY=...
 uv run fineprint.py "Does UHC cover bilateral cochlear implants for adults?"
 ```
 
+The first run parses and embeds the PDFs and saves the result to `index.json`. Later runs read that file and rebuild it only when a PDF, `fineprint.py` or `uv.lock` changes.
+
 ## How a PDF becomes chunks
 
 - Page 1 of each policy goes to the model once, which returns the payer, title, policy number and effective date as a typed `PolicyMeta` object. That line is prepended to every chunk so a chunk still says which policy it belongs to.

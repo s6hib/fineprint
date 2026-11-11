@@ -1,3 +1,5 @@
+import hashlib
+import json
 import re
 from pathlib import Path
 import anthropic
@@ -35,6 +37,39 @@ def load_corpus(data_dir: Path = DATA_DIR) -> list[dict]:
             chunk.update(meta.model_dump())
         chunks.extend(doc_chunks)
     return chunks
+
+
+INDEX_PATH = Path(__file__).parent / "index.json"
+
+
+def fingerprint(data_dir: Path) -> str:
+    """Hash of this file, uv.lock and every PDF. If any of them changes, the saved index is stale."""
+    here = Path(__file__)
+    h = hashlib.sha256(here.read_bytes())
+    h.update((here.parent / "uv.lock").read_bytes())
+    for pdf_path in sorted(data_dir.glob("*.pdf")):
+        h.update(pdf_path.name.encode())
+        h.update(pdf_path.read_bytes())
+    return h.hexdigest()
+
+
+def load_index(data_dir: Path = DATA_DIR) -> tuple[list[dict], list[list[float]]]:
+    """Chunks and their vectors. Read from index.json if it is current, else built and saved."""
+    current = fingerprint(data_dir)
+    try:
+        saved = json.loads(INDEX_PATH.read_text())
+        if saved["fingerprint"] == current:
+            return saved["chunks"], saved["vectors"]
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        pass  # no file, or a damaged one: build it again
+    chunks = load_corpus(data_dir)
+    vectors = embed([chunk_text(c) for c in chunks], "document")
+    tmp = INDEX_PATH.with_suffix(".tmp")
+    tmp.write_text(
+        json.dumps({"fingerprint": current, "chunks": chunks, "vectors": vectors})
+    )
+    tmp.replace(INDEX_PATH)  # swapped in whole, so a stopped run can't leave half a file
+    return chunks, vectors
 
 
 HEADING_RATIO = 1.15  # a line this much bigger than body text is a heading
@@ -301,11 +336,10 @@ def extract_metadata(text: str) -> PolicyMeta:
 MAX_TURNS = 6
 
 
-def run_agent(question: str, corpus: list[dict]) -> str:
+def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> str:
     client = anthropic.Anthropic()
     messages = [{"role": "user", "content": question}]
     db = build_index(corpus)
-    vectors = embed([chunk_text(c) for c in corpus], "document")
 
     for _ in range(MAX_TURNS):
         response = client.messages.create(
@@ -340,5 +374,5 @@ if __name__ == "__main__":
         " ".join(sys.argv[1:])
         or "Does UHC cover bilateral cochlear implants for adults?"
     )
-    corpus = load_corpus()
-    print(run_agent(question, corpus))
+    corpus, vectors = load_index()
+    print(run_agent(question, corpus, vectors))

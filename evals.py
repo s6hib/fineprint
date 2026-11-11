@@ -18,10 +18,8 @@ if __name__ == "__main__":
     from fineprint import (
         CANDIDATES,
         build_index,
-        chunk_text,
-        embed,
         keyword_search,
-        load_corpus,
+        load_index,
         rerank,
         rrf,
         vector_search,
@@ -30,9 +28,8 @@ if __name__ == "__main__":
     gold = [
         r for r in load_gold() if r["files"]
     ]  # out-of-corpus rows have no page to find
-    corpus = load_corpus()
+    corpus, vectors = load_index()
     db = build_index(corpus)
-    vectors = embed([chunk_text(c) for c in corpus], "document")
 
     fused_hits = rerank_hits = 0
     for row in gold:
