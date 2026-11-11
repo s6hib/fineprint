@@ -48,6 +48,12 @@ uv run judge.py
 
 `judge.py` grades the answers with a second model. Six labeled answers go to the judge as examples, and it is scored on the other 44: how many passing answers it keeps and how many failing answers it catches. For each answer the judge sees the question, the reference answer, and the text of the pages the reference comes from and the pages the answer cites. Its verdicts go to `judgments.jsonl`.
 
+```sh
+uv run citations.py
+```
+
+`citations.py` checks the citations in the saved answers with plain code and no model. It counts how many answers cite anything, how many citations point to a file and page that exist, how many answers cite a page the gold answer lives on, and how many quoted passages appear on a page the answer cites.
+
 ## Files
 
 | File | What it is |
@@ -58,6 +64,7 @@ uv run judge.py
 | `answers.py` | runs the agent on every gold question |
 | `answers.jsonl` | the agent's 50 answers |
 | `labels.jsonl` | pass or fail for each answer, with a reason |
+| `citations.py` | checks the citations and quotes in the answers |
 | `judge.py` | grades answers with a second model and compares it with the labels |
 | `judgments.jsonl` | the judge's verdicts on the 44 answers it was scored on |
 | `fetch_data.sh` | downloads the policy PDFs into `data/` (git-ignored) |

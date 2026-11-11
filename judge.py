@@ -1,16 +1,14 @@
 import json
 import random
-import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Literal
 
 import anthropic
-import pymupdf
 from pydantic import BaseModel
 
+from citations import citations, page_text
 from evals import load_gold
-from fineprint import DATA_DIR, ocr_textpage
 
 HERE = Path(__file__).parent
 JUDGMENTS = HERE / "judgments.jsonl"
@@ -69,21 +67,15 @@ def split(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return examples, [r for r in rows if r["id"] not in example_ids]
 
 
-CITATION = re.compile(r"\[([\w.-]+\.pdf) p\.(\d+)(?:-(\d+))?\]")
-
-
 def source_text(row: dict) -> str:
     """Text of the pages the gold answer lives on, plus every page the answer cites."""
     wanted = {(f, n) for f in row["files"][:1] for n in row["pages"]}
-    for file, first, last in CITATION.findall(row["answer"]):
-        wanted |= {(file, n) for n in range(int(first), int(last or first) + 1)}
-    pages = []
-    for file, n in sorted(wanted):
-        path = DATA_DIR / file
-        if path.exists() and n <= len(doc := pymupdf.open(path)):
-            page = doc[n - 1]
-            text = page.get_text(textpage=ocr_textpage(page))  # scans have no text layer
-            pages.append(f"[{file} p.{n}]\n{text}")
+    wanted |= {(f, n) for _, f, n in citations(row["answer"])}
+    pages = [
+        f"[{f} p.{n}]\n{text}"
+        for f, n in sorted(wanted)
+        if (text := page_text(f, n)) is not None
+    ]
     return "\n\n".join(pages) or "(none)"
 
 
