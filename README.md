@@ -2,7 +2,7 @@
 
 Ask a question about a health insurer's medical policy and get an answer with the file and page it came from.
 
-Insurance policies are long PDFs with the useful part buried under headings, tables and billing codes. fineprint pulls a handful of public UnitedHealthcare commercial policies, cuts them into chunks that keep their heading and page number, and gives Claude one tool: `search_policies`. The model searches, reads what comes back, and answers with a `[file.pdf p.N]` tag on every claim. If the chunks don't answer the question, it says so.
+Insurance policies are long PDFs with the useful part buried under headings, tables and billing codes. fineprint pulls a handful of public UnitedHealthcare commercial policies, cuts them into chunks that keep their heading and page number, and gives Claude one tool: `search_policies`. The model searches, reads what comes back, and answers with a `[file.pdf p.N]` tag on every claim. The system prompt tells it to say so when the chunks don't answer the question.
 
 ```sh
 uv sync
@@ -30,7 +30,7 @@ The top 10 from each are merged with reciprocal rank fusion, then Voyage `rerank
 
 ## Eval
 
-`gold.jsonl` holds 50 hand-written questions with the answer and the file and pages it lives on: coverage criteria, exclusions, billing codes, definitions, policy metadata, and three questions the corpus can't answer.
+`gold.jsonl` holds 50 questions with the answer and the file and pages it lives on: coverage criteria, exclusions, billing codes, definitions, policy metadata, and three questions the corpus can't answer.
 
 ```sh
 uv run evals.py

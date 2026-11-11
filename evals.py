@@ -5,7 +5,7 @@ GOLD = Path(__file__).parent / "gold.jsonl"
 
 
 def load_gold() -> list[dict]:
-    """The hand-checked questions, one per line of gold.jsonl."""
+    """The gold questions, one per line of gold.jsonl."""
     return [json.loads(line) for line in GOLD.read_text().splitlines()]
 
 
