@@ -40,6 +40,14 @@ uv run evals.py
 
 It prints recall@10 after fusion and recall@3 after reranking, and lists every question the reranker missed with whether fusion had found it. Out-of-corpus questions are skipped since there is no page to find.
 
+`answers.py` runs the agent on every gold question and saves what it said to `answers.jsonl`. `labels.jsonl` marks each answer pass or fail with a one-line reason.
+
+```sh
+uv run judge.py
+```
+
+`judge.py` grades the answers with a second model. Six labeled answers go to the judge as examples, and it is scored on the other 44: how many passing answers it keeps and how many failing answers it catches. For each answer the judge sees the question, the reference answer, and the text of the pages the reference comes from and the pages the answer cites. Its verdicts go to `judgments.jsonl`.
+
 ## Files
 
 | File | What it is |
@@ -47,4 +55,9 @@ It prints recall@10 after fusion and recall@3 after reranking, and lists every q
 | `fineprint.py` | chunking, index, search tool, agent loop |
 | `evals.py` | recall over the gold set |
 | `gold.jsonl` | the 50 questions |
+| `answers.py` | runs the agent on every gold question |
+| `answers.jsonl` | the agent's 50 answers |
+| `labels.jsonl` | pass or fail for each answer, with a reason |
+| `judge.py` | grades answers with a second model and compares it with the labels |
+| `judgments.jsonl` | the judge's verdicts on the 44 answers it was scored on |
 | `fetch_data.sh` | downloads the policy PDFs into `data/` (git-ignored) |
