@@ -191,7 +191,7 @@ MAX_COLUMN_NAME = 40  # characters; longer than this and the cell is a sentence
 
 
 def table_chunks(file: str, doc) -> list[dict]:
-    """One chunk per table. Each row becomes one line: cell | cell | cell."""
+    """A chunk per table, more if it is long. Each row becomes one line: cell | cell | cell."""
     chunks = []
     for page_number, page in enumerate(doc, start=1):
         for table in page.find_tables().tables:
@@ -216,7 +216,8 @@ def table_chunks(file: str, doc) -> list[dict]:
                     "text": "\n".join(lines),
                 }
             )
-    return chunks
+    # long tables are cut between rows; the column names ride along as the heading
+    return [piece for c in chunks for piece in split_long(c)]
 
 
 MAX_CHUNK_CHARS = 1500  # ~375 tokens
