@@ -323,7 +323,10 @@ def search_policies(
     vectors: list[list[float]],
     top_k: int = 3,
 ) -> str:
-    """The tool the model calls. Fuses keyword and vector hits, tags each with its [file p.N]."""
+    """The tool the model calls. Fuses keyword and vector hits, tags each with its [file p.N].
+
+    Under the tag each chunk says which policy it is from and when that policy took effect.
+    """
     keyword_hits = keyword_search(query, db, CANDIDATES)
     vector_hits = vector_search(query, vectors, CANDIDATES)
     fused = rrf([keyword_hits, vector_hits], CANDIDATES)
@@ -331,7 +334,10 @@ def search_policies(
 
     return (
         "\n\n---\n\n".join(
-            f"[{c['file']} p.{c['page']}]\n{c['heading']}\n{c['text'][:4000]}"
+            f"[{c['file']} p.{c['page']}]\n"
+            f"{c['title']} ({c['payer']}), policy {c['policy_number']}, "
+            f"effective {c['effective_date']}\n"
+            f"{c['heading']}\n{c['text'][:4000]}"
             for c in hits
         )
         or "No matching chunks."
