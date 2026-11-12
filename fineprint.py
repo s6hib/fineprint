@@ -23,18 +23,26 @@ class PolicyMeta(BaseModel):
     effective_date: str
 
 
+META_PATH = Path(__file__).parent / "meta.json"  # page-1 metadata, keyed by the PDF's hash
+
+
 def load_corpus(data_dir: Path = DATA_DIR) -> list[dict]:
     """One entry per chunk. File, page, heading and policy metadata travel with the text."""
+    saved = json.loads(META_PATH.read_text()) if META_PATH.exists() else {}
     chunks = []
     for pdf_path in sorted(data_dir.glob("*.pdf")):
         doc = pymupdf.open(pdf_path)
-        first = doc[0]
-        meta = extract_metadata(first.get_text(textpage=ocr_textpage(first)))
+        key = hashlib.sha256(pdf_path.read_bytes()).hexdigest()
+        if key not in saved:  # the model reads page 1 once per PDF, not on every rebuild
+            first = doc[0]
+            meta = extract_metadata(first.get_text(textpage=ocr_textpage(first)))
+            saved[key] = meta.model_dump()
+            META_PATH.write_text(json.dumps(saved, indent=1))
         doc_chunks = chunk_by_heading(pdf_path.name, doc) + table_chunks(
             pdf_path.name, doc
         )
         for chunk in doc_chunks:
-            chunk.update(meta.model_dump())
+            chunk.update(saved[key])
         chunks.extend(doc_chunks)
     return chunks
 
