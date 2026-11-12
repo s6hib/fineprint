@@ -412,14 +412,14 @@ SYSTEM = (
     "If the chunks don't answer the question, say so."
 )
 
-MODEL = "claude-haiku-4-5-20251001"
+MODEL = "claude-haiku-5-5"
 
 # Dollars per million tokens for MODEL, by the names the API reports usage under.
 PRICE = {
-    "input_tokens": 1.00,
-    "output_tokens": 5.00,
-    "cache_creation_input_tokens": 1.25,
-    "cache_read_input_tokens": 0.10,
+    "input_tokens": 0.10,
+    "output_tokens": 0.50,
+    "cache_creation_input_tokens": 0.125,
+    "cache_read_input_tokens": 0.01,
 }
 
 
