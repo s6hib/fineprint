@@ -1,6 +1,7 @@
 import hashlib
 import json
 import re
+import time
 from pathlib import Path
 import anthropic
 import pymupdf
@@ -413,6 +414,19 @@ SYSTEM = (
 
 MODEL = "claude-haiku-4-5-20251001"
 
+# Dollars per million tokens for MODEL, by the names the API reports usage under.
+PRICE = {
+    "input_tokens": 1.00,
+    "output_tokens": 5.00,
+    "cache_creation_input_tokens": 1.25,
+    "cache_read_input_tokens": 0.10,
+}
+
+
+def cost_usd(tokens: dict) -> float:
+    """What a token count costs at PRICE."""
+    return sum(tokens[kind] * PRICE[kind] for kind in PRICE) / 1_000_000
+
 
 def extract_metadata(text: str) -> PolicyMeta:
     """Ask the model for payer, title, policy number and effective date from page 1."""
@@ -434,10 +448,18 @@ def extract_metadata(text: str) -> PolicyMeta:
 MAX_TURNS = 6
 
 
-def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> str:
+def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> dict:
+    """Answer one question. Returns the answer with its model calls, tokens, cost and time.
+
+    The cost covers the Claude calls only. Voyage search calls are not counted.
+    """
     client = anthropic.Anthropic()
     messages = [{"role": "user", "content": question}]
     db = build_index(corpus)
+    started = time.perf_counter()
+    tokens = dict.fromkeys(PRICE, 0)
+    calls = 0
+    answer = "Stopped: too many tool calls."
 
     for _ in range(MAX_TURNS):
         response = client.messages.create(
@@ -447,10 +469,14 @@ def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> 
             tools=TOOLS,
             messages=messages,
         )
+        calls += 1
+        for kind in PRICE:
+            tokens[kind] += getattr(response.usage, kind, None) or 0
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason != "tool_use":
-            return "".join(b.text for b in response.content if b.type == "text")
+            answer = "".join(b.text for b in response.content if b.type == "text")
+            break
 
         results = []
         for block in response.content:
@@ -462,7 +488,22 @@ def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> 
                 )
         messages.append({"role": "user", "content": results})
 
-    return "Stopped: too many tool calls."
+    return {
+        "answer": answer,
+        "model_calls": calls,
+        **tokens,
+        "cost_usd": round(cost_usd(tokens), 6),
+        "seconds": round(time.perf_counter() - started, 1),
+    }
+
+
+def usage_line(run: dict) -> str:
+    """One line with what a run used."""
+    tokens_in = sum(run[kind] for kind in PRICE if kind != "output_tokens")
+    return (
+        f"{run['model_calls']} model calls, {tokens_in:,} tokens in, "
+        f"{run['output_tokens']:,} out, ${run['cost_usd']:.4f}, {run['seconds']}s"
+    )
 
 
 if __name__ == "__main__":
@@ -473,4 +514,6 @@ if __name__ == "__main__":
         or "Does UHC cover bilateral cochlear implants for adults?"
     )
     corpus, vectors = load_index()
-    print(run_agent(question, corpus, vectors))
+    run = run_agent(question, corpus, vectors)
+    print(run["answer"])
+    print(usage_line(run))
