@@ -82,12 +82,19 @@ def load_index(data_dir: Path = DATA_DIR) -> tuple[list[dict], list[list[float]]
 
 HEADING_RATIO = 1.15  # a line this much bigger than body text is a heading
 
+SAME_LEVEL = 1.1  # headings within 10% of each other in size are the same level
+
 MIN_CHARS_PER_PAGE = 50  # less than this and the page is a scan, not text
+
+
+def is_scan(page) -> bool:
+    """True for a page that is a picture with no text layer."""
+    return len(page.get_text().strip()) < MIN_CHARS_PER_PAGE and bool(page.get_images())
 
 
 def ocr_textpage(page):
     """OCR a page that is an image with nothing under it. None means use the text layer."""
-    if len(page.get_text().strip()) >= MIN_CHARS_PER_PAGE or not page.get_images():
+    if not is_scan(page):
         return None
     print(f"  ocr: {page.parent.name} p.{page.number + 1}")
     return page.get_textpage_ocr(language="eng", dpi=300, full=True)
@@ -123,6 +130,8 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
 
     chunks = []
     current = {"file": file, "page": 1, "heading": "", "text": ""}
+    open_headings = []  # the heading we are under at each level, biggest font first
+    levels = not any(is_scan(p) for p in doc)  # OCR font sizes are too noisy to tell levels
     for page_number, blocks in pages:
         if current["text"]:
             chunks.append(current)
@@ -133,10 +142,18 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
                 if line["size"] > body * HEADING_RATIO and len(line["text"]) < 120:
                     if current["text"]:
                         chunks.append(current)
+                    # a new heading closes every open one that is not clearly bigger
+                    while open_headings and (
+                        not levels or open_headings[-1]["size"] <= line["size"] * SAME_LEVEL
+                    ):
+                        open_headings.pop()
+                    open_headings.append(line)
+                    # the first level is the document title, which the prefix already has
+                    path = open_headings[1:] or open_headings
                     current = {
                         "file": file,
                         "page": page_number,
-                        "heading": line["text"],
+                        "heading": " > ".join(h["text"] for h in path),
                         "text": "",
                     }
                 else:
