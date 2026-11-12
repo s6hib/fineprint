@@ -82,6 +82,7 @@ def load_index(data_dir: Path = DATA_DIR) -> tuple[list[dict], list[list[float]]
 HEADING_RATIO = 1.15  # a line this much bigger than body text is a heading
 
 SAME_LEVEL = 1.1  # headings within 10% of each other in size are the same level
+WRAP_AT = 0.75  # a heading line that reaches this far across the page continues on the next
 
 MIN_CHARS_PER_PAGE = 50  # less than this and the page is a scan, not text
 
@@ -115,7 +116,12 @@ def page_lines(page) -> list[list[dict]]:
             text = " ".join(s["text"] for s in line["spans"]).strip()
             if text:
                 lines.append(
-                    {"text": text, "size": max(s["size"] for s in line["spans"]), "y": y0}
+                    {
+                        "text": text,
+                        "size": max(s["size"] for s in line["spans"]),
+                        "y": y0,
+                        "wraps": x1 >= page.rect.width * WRAP_AT,
+                    }
                 )
         if lines:
             blocks.append(lines)
@@ -167,16 +173,25 @@ def chunk_by_heading(file: str, doc) -> tuple[list[dict], list[tuple]]:
         current = {**current, "page": page_number, "text": ""}
 
         for lines in blocks:
+            wrapped = None  # the heading line just read, if it ran to the right margin
             for line in lines:
+                previous, wrapped = wrapped, None
                 if line["size"] > body * HEADING_RATIO and len(line["text"]) < 120:
-                    if current["text"]:
-                        chunks.append(current)
-                    # a new heading closes every open one that is not clearly bigger
-                    while open_headings and (
-                        not levels or open_headings[-1]["size"] <= line["size"] * SAME_LEVEL
-                    ):
-                        open_headings.pop()
-                    open_headings.append(line)
+                    if levels and previous and abs(previous["size"] - line["size"]) < 0.2:
+                        # the second line of a heading: add it to the heading, start nothing new
+                        joined = open_headings[-1]["text"] + " " + line["text"]
+                        open_headings[-1] = {**open_headings[-1], "text": joined}
+                        headings.pop()
+                    else:
+                        if current["text"]:
+                            chunks.append(current)
+                        # a new heading closes every open one that is not clearly bigger
+                        while open_headings and (
+                            not levels
+                            or open_headings[-1]["size"] <= line["size"] * SAME_LEVEL
+                        ):
+                            open_headings.pop()
+                        open_headings.append(line)
                     # the first level is the document title, which the prefix already has
                     path = open_headings[1:] or open_headings
                     current = {
@@ -185,7 +200,8 @@ def chunk_by_heading(file: str, doc) -> tuple[list[dict], list[tuple]]:
                         "heading": " > ".join(h["text"] for h in path),
                         "text": "",
                     }
-                    headings.append((page_number, line["y"], current["heading"]))
+                    headings.append((page_number, open_headings[-1]["y"], current["heading"]))
+                    wrapped = line if line["wraps"] else None
                 elif mask_digits(line["text"]) not in repeated:
                     current["text"] += line["text"] + " "
             if current["text"]:
