@@ -118,6 +118,25 @@ def page_lines(page) -> list[list[dict]]:
     return blocks
 
 
+def mask_digits(text: str) -> str:
+    """Swap every number for #, so "Page 3 of 7" and "Page 4 of 7" read the same."""
+    return re.sub(r"\d+", "#", text)
+
+
+def repeated_lines(pages: list) -> set[str]:
+    """Lines printed on most pages of a document: its headers and footers, digits masked."""
+    if len(pages) < 3:  # too few pages to tell a footer from ordinary text
+        return set()
+    seen = Counter()
+    for _, blocks in pages:
+        seen.update({mask_digits(line["text"]) for lines in blocks for line in lines})
+    return {
+        text
+        for text, count in seen.items()
+        if count > len(pages) / 2 and len(text) >= 10  # short lines repeat by chance
+    }
+
+
 def chunk_by_heading(file: str, doc) -> list[dict]:
     """Cut a document into chunks: each starts at a heading line, runs to the next."""
     pages = [(n, page_lines(p)) for n, p in enumerate(doc, start=1)]
@@ -127,6 +146,7 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
             for line in lines:
                 sizes[round(line["size"], 1)] += len(line["text"])
     body = sizes.most_common(1)[0][0]
+    repeated = repeated_lines(pages)
 
     chunks = []
     current = {"file": file, "page": 1, "heading": "", "text": ""}
@@ -156,7 +176,7 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
                         "heading": " > ".join(h["text"] for h in path),
                         "text": "",
                     }
-                else:
+                elif mask_digits(line["text"]) not in repeated:
                     current["text"] += line["text"] + " "
             if current["text"]:
                 current["text"] = (
