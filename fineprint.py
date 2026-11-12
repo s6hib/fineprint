@@ -51,7 +51,7 @@ INDEX_PATH = Path(__file__).parent / "index.json"
 
 
 def fingerprint(data_dir: Path) -> str:
-    """Hash of this file, uv.lock and every PDF. If any of them changes, the saved index is stale."""
+    """Hash of this file, uv.lock and every PDF. If any of them changes, the chunks are cut again."""
     here = Path(__file__)
     h = hashlib.sha256(here.read_bytes())
     h.update((here.parent / "uv.lock").read_bytes())
@@ -61,20 +61,44 @@ def fingerprint(data_dir: Path) -> str:
     return h.hexdigest()
 
 
+def embed_key(text: str) -> str:
+    """Names one embedding: a hash of the embedding model and the exact text sent to it."""
+    return hashlib.sha256(f"{EMBED_MODEL}\n{text}".encode()).hexdigest()
+
+
 def load_index(data_dir: Path = DATA_DIR) -> tuple[list[dict], list[list[float]]]:
-    """Chunks and their vectors. Read from index.json if it is current, else built and saved."""
+    """Chunks and their vectors. Read from index.json if it is current, else built and saved.
+
+    A rebuild cuts the chunks again but embeds only text that was not embedded before.
+    A code change that leaves the chunks alone costs no embedding calls.
+    """
     current = fingerprint(data_dir)
+    known = {}  # embed_key -> saved vector
     try:
         saved = json.loads(INDEX_PATH.read_text())
         if saved["fingerprint"] == current:
             return saved["chunks"], saved["vectors"]
+        known = dict(zip(saved["embedded"], saved["vectors"]))
     except (FileNotFoundError, json.JSONDecodeError, KeyError):
-        pass  # no file, or a damaged one: build it again
+        pass  # no file, a damaged one, or one from before the keys were saved
     chunks = load_corpus(data_dir)
-    vectors = embed([chunk_text(c) for c in chunks], "document")
+    texts = [chunk_text(c) for c in chunks]
+    keys = [embed_key(t) for t in texts]
+    new = {k: t for k, t in zip(keys, texts) if k not in known}
+    if new:
+        print(f"embedding {len(new)} of {len(texts)} chunks")
+        known.update(zip(new, embed(list(new.values()), "document")))
+    vectors = [known[k] for k in keys]
     tmp = INDEX_PATH.with_suffix(".tmp")
     tmp.write_text(
-        json.dumps({"fingerprint": current, "chunks": chunks, "vectors": vectors})
+        json.dumps(
+            {
+                "fingerprint": current,
+                "embedded": keys,
+                "chunks": chunks,
+                "vectors": vectors,
+            }
+        )
     )
     tmp.replace(INDEX_PATH)  # swapped in whole, so a stopped run can't leave half a file
     return chunks, vectors

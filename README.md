@@ -11,7 +11,7 @@ export ANTHROPIC_API_KEY=... VOYAGE_API_KEY=...
 uv run fineprint.py "Does UHC cover bilateral cochlear implants for adults?"
 ```
 
-The first run parses and embeds the PDFs and saves the result to `index.json`. Later runs read that file and rebuild it only when a PDF, `fineprint.py` or `uv.lock` changes.
+The first run parses and embeds the PDFs and saves the result to `index.json`. Later runs read that file. When a PDF, `fineprint.py` or `uv.lock` changes, the chunks are cut again, but only chunks whose text is new are embedded.
 
 ## How a PDF becomes chunks
 
