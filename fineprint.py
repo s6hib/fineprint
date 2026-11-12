@@ -38,9 +38,8 @@ def load_corpus(data_dir: Path = DATA_DIR) -> list[dict]:
             meta = extract_metadata(first.get_text(textpage=ocr_textpage(first)))
             saved[key] = meta.model_dump()
             META_PATH.write_text(json.dumps(saved, indent=1))
-        doc_chunks = chunk_by_heading(pdf_path.name, doc) + table_chunks(
-            pdf_path.name, doc
-        )
+        doc_chunks, headings = chunk_by_heading(pdf_path.name, doc)
+        doc_chunks += table_chunks(pdf_path.name, doc, headings)
         for chunk in doc_chunks:
             chunk.update(saved[key])
         chunks.extend(doc_chunks)
@@ -101,17 +100,22 @@ def ocr_textpage(page):
 
 
 def page_lines(page) -> list[list[dict]]:
-    """Text blocks of a page, each a list of lines: the line's text and its largest font size."""
+    """Text blocks of a page outside its tables, each a list of lines: text, font size, height on page."""
+    tables = [pymupdf.Rect(t.bbox) for t in real_tables(page)]
     blocks = []
     for block in page.get_text("dict", textpage=ocr_textpage(page))["blocks"]:
         if block["type"] != 0:  # 0 = text, 1 = image
             continue
         lines = []
         for line in block["lines"]:
+            x0, y0, x1, y1 = line["bbox"]
+            middle = pymupdf.Point((x0 + x1) / 2, (y0 + y1) / 2)
+            if any(t.contains(middle) for t in tables):
+                continue  # this text is already in a table chunk
             text = " ".join(s["text"] for s in line["spans"]).strip()
             if text:
                 lines.append(
-                    {"text": text, "size": max(s["size"] for s in line["spans"])}
+                    {"text": text, "size": max(s["size"] for s in line["spans"]), "y": y0}
                 )
         if lines:
             blocks.append(lines)
@@ -137,8 +141,12 @@ def repeated_lines(pages: list) -> set[str]:
     }
 
 
-def chunk_by_heading(file: str, doc) -> list[dict]:
-    """Cut a document into chunks: each starts at a heading line, runs to the next."""
+def chunk_by_heading(file: str, doc) -> tuple[list[dict], list[tuple]]:
+    """Cut a document into chunks: each starts at a heading line, runs to the next.
+
+    Also returns where each heading sits, as (page, height on page, heading path),
+    so a table can be given the section it is in.
+    """
     pages = [(n, page_lines(p)) for n, p in enumerate(doc, start=1)]
     sizes = Counter()
     for _, blocks in pages:
@@ -149,6 +157,7 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
     repeated = repeated_lines(pages)
 
     chunks = []
+    headings = []
     current = {"file": file, "page": 1, "heading": "", "text": ""}
     open_headings = []  # the heading we are under at each level, biggest font first
     levels = not any(is_scan(p) for p in doc)  # OCR font sizes are too noisy to tell levels
@@ -176,6 +185,7 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
                         "heading": " > ".join(h["text"] for h in path),
                         "text": "",
                     }
+                    headings.append((page_number, line["y"], current["heading"]))
                 elif mask_digits(line["text"]) not in repeated:
                     current["text"] += line["text"] + " "
             if current["text"]:
@@ -184,23 +194,34 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
                 )  # a block ends a paragraph
     if current["text"]:
         chunks.append(current)
-    return [piece for c in chunks for piece in split_long(c)]
+    return [piece for c in chunks for piece in split_long(c)], headings
 
 
 MAX_COLUMN_NAME = 40  # characters; longer than this and the cell is a sentence
 
 
-def table_chunks(file: str, doc) -> list[dict]:
-    """A chunk per table, more if it is long. Each row becomes one line: cell | cell | cell."""
+def real_tables(page) -> list:
+    """Tables on a page that start with a row of short column names.
+
+    PyMuPDF also reports boxes drawn around prose or a sidebar. Those don't.
+    """
+    found = []
+    for table in page.find_tables().tables:
+        header = [cell.strip() for cell in table.extract()[0] if cell and cell.strip()]
+        if len(header) >= 2 and max(map(len, header)) <= MAX_COLUMN_NAME:
+            found.append(table)
+    return found
+
+
+def table_chunks(file: str, doc, headings: list[tuple]) -> list[dict]:
+    """A chunk per table, more if it is long. Each row becomes one line: cell | cell | cell.
+
+    The heading is the section the table sits in, then its column names.
+    """
     chunks = []
     for page_number, page in enumerate(doc, start=1):
-        for table in page.find_tables().tables:
+        for table in real_tables(page):
             rows = table.extract()  # list of rows, each a list of cell strings or None
-            # a real table starts with a row of short column names; a box drawn
-            # around prose or a sidebar does not
-            header = [cell.strip() for cell in rows[0] if cell and cell.strip()]
-            if len(header) < 2 or max(map(len, header)) > MAX_COLUMN_NAME:
-                continue
             lines = [
                 " | ".join(cell.strip() for cell in row if cell and cell.strip())
                 for row in rows
@@ -208,11 +229,12 @@ def table_chunks(file: str, doc) -> list[dict]:
             ]
             if not lines:
                 continue
+            above = [h for page, y, h in headings if (page, y) <= (page_number, table.bbox[1])]
             chunks.append(
                 {
                     "file": file,
                     "page": page_number,
-                    "heading": lines[0],
+                    "heading": " > ".join(above[-1:] + [lines[0]]),
                     "text": "\n".join(lines),
                 }
             )
