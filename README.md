@@ -18,7 +18,7 @@ The first run parses and embeds the PDFs and saves the result to `index.json`. L
 - Page 1 of each policy goes to the model once (the result is saved in `meta.json`), which returns the payer, title, policy number and effective date as a typed `PolicyMeta` object. That line is prepended to every chunk so a chunk still says which policy it belongs to.
 - Headings are found by font size: the most common size on the page is body text, anything 15% larger and under 120 characters starts a new chunk. A chunk runs to the next heading and closes at every page break so its page number stays right. A chunk under a sub-heading keeps its section name as well, as in `Clinical Evidence > Revisional Surgery`.
 - Lines printed on most pages of a document, its headers and footers, are left out. Page numbers are masked first so "Page 3 of 7" and "Page 4 of 7" count as the same line.
-- Tables come out as their own chunks, one row per line, cells joined with `|`.
+- Tables come out as their own chunks, one row per line, cells joined with `|`. A box counts as a table only if its first row is two or more short column names, which leaves out sidebars and boxed paragraphs.
 - Pages with no text layer are OCR'd (PyMuPDF, 300 dpi).
 - Chunks over 1,500 characters are split at paragraph breaks, then at sentence ends, and keep their heading.
 

@@ -187,12 +187,20 @@ def chunk_by_heading(file: str, doc) -> list[dict]:
     return [piece for c in chunks for piece in split_long(c)]
 
 
+MAX_COLUMN_NAME = 40  # characters; longer than this and the cell is a sentence
+
+
 def table_chunks(file: str, doc) -> list[dict]:
     """One chunk per table. Each row becomes one line: cell | cell | cell."""
     chunks = []
     for page_number, page in enumerate(doc, start=1):
         for table in page.find_tables().tables:
             rows = table.extract()  # list of rows, each a list of cell strings or None
+            # a real table starts with a row of short column names; a box drawn
+            # around prose or a sidebar does not
+            header = [cell.strip() for cell in rows[0] if cell and cell.strip()]
+            if len(header) < 2 or max(map(len, header)) > MAX_COLUMN_NAME:
+                continue
             lines = [
                 " | ".join(cell.strip() for cell in row if cell and cell.strip())
                 for row in rows
