@@ -266,7 +266,7 @@ def keyword_search(query: str, db: sqlite3.Connection, top_k: int = 3) -> list[i
     return [rowid for (rowid,) in rows]
 
 
-CANDIDATES = 10  # how many hits each search hands to the fusion
+CANDIDATES = 20  # how many hits each search hands to the fusion
 
 
 def search_policies(

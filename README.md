@@ -29,7 +29,7 @@ Two searches run on every query and their results are fused:
 1. BM25 over an in-memory SQLite FTS5 table. Query terms are quoted so billing codes like `A0431` stay whole.
 2. Voyage `voyage-4` embeddings, scored by dot product against every chunk.
 
-The top 10 from each are merged with reciprocal rank fusion, then Voyage `rerank-3` picks the final 3 chunks the model sees. The agent loop allows up to 6 tool calls before it gives up.
+The top 20 from each are merged with reciprocal rank fusion, then Voyage `rerank-3` picks the final 3 chunks the model sees. The agent loop allows up to 6 tool calls before it gives up.
 
 ## Eval
 
@@ -41,7 +41,7 @@ The top 10 from each are merged with reciprocal rank fusion, then Voyage `rerank
 uv run evals.py
 ```
 
-It prints recall@10 after fusion and recall@3 after reranking, and lists every question the reranker missed with whether fusion had found it. Out-of-corpus questions are skipped since there is no page to find.
+It prints recall@20 after fusion and recall@3 after reranking, and lists every question the reranker missed with whether fusion had found it. Out-of-corpus questions are skipped since there is no page to find.
 
 `answers.py` runs the agent on every gold question and saves what it said to `answers.jsonl`. `labels.jsonl` marks each answer pass or fail with a one-line reason.
 

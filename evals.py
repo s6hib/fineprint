@@ -48,5 +48,5 @@ if __name__ == "__main__":
                 f"  miss {row['id']} ({row['kind']}): fused {'yes' if fused_hit else 'no'}"
             )
 
-    print(f"recall@10 after rrf:   {fused_hits}/{len(gold)}")
+    print(f"recall@{CANDIDATES} after rrf:   {fused_hits}/{len(gold)}")
     print(f"recall@3 after rerank: {rerank_hits}/{len(gold)}")
