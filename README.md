@@ -33,7 +33,7 @@ The top 20 from each are merged with reciprocal rank fusion, then Voyage `rerank
 
 `get_policy` returns one whole section of one policy in page order, such as its Coverage Rationale, up to 10,000 characters. Search hands the model three chunks, which can be only part of a list of criteria, so the prompt tells it to read the full section when an answer depends on every condition. With no section named it lists the policy's sections.
 
-The agent loop allows 6 model calls. On the sixth the model can no longer search and has to answer from what it has found. API calls time out after 60 seconds, and a failure that looks temporary, such as a rate limit, is retried up to 3 times. A search that still fails is reported to the model as an error, so it can try again or say it could not look.
+The agent loop allows 6 model calls. On the sixth the model can no longer search and has to answer from what it has found. API calls time out after 60 seconds, and a failure that looks temporary, such as a rate limit, is retried up to 3 times. A search that still fails is reported to the model as an error, so it can try again or say it could not look. Every model call is marked for prompt caching, so the next call in the same question reads the part it repeats at a tenth of the input price.
 
 ## Eval
 

@@ -703,6 +703,10 @@ def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> 
                 tools=TOOLS,
                 tool_choice={"type": "none" if last else "auto"},
                 messages=messages,
+                # Each call resends everything before it. This marks the end of the request
+                # as a cache point, so the next call reads the repeated part at a tenth
+                # of the input price. Writing to the cache costs a quarter more than input.
+                cache_control={"type": "ephemeral"},
             )
         except CLAUDE_DOWN as e:  # still failing after the retries
             print(f"  model error: {type(e).__name__}: {e}")
@@ -740,7 +744,8 @@ def usage_line(run: dict) -> str:
     """One line with what a run used."""
     tokens_in = sum(run[kind] for kind in PRICE if kind != "output_tokens")
     return (
-        f"{run['model_calls']} model calls, {tokens_in:,} tokens in, "
+        f"{run['model_calls']} model calls, {tokens_in:,} tokens in "
+        f"({run['cache_read_input_tokens']:,} from cache), "
         f"{run['output_tokens']:,} out, ${run['cost_usd']:.4f}, {run['seconds']}s"
     )
 
