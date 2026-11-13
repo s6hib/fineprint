@@ -2,6 +2,8 @@
 
 Ask a question about a health insurer's medical policy and get an answer with the file and page it came from.
 
+Live demo: https://fineprint.fly.dev
+
 Insurance policies are long PDFs with the useful part buried under headings, tables and billing codes. fineprint pulls a handful of public UnitedHealthcare commercial policies, cuts them into chunks that keep their heading and page number, and gives Claude three tools for reading them: `search_policies`, `lookup_code` for billing codes, and `get_policy` to read a whole section. The model searches, reads what comes back, and answers with a `[file.pdf p.N]` tag on every claim. A fourth tool, `draft_prior_auth`, drafts a prior-authorization request and saves it only if you approve it. The system prompt tells it to say so when the chunks don't answer the question.
 
 ```sh
