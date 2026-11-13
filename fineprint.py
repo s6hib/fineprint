@@ -475,6 +475,7 @@ def get_policy(policy: str, section: str, corpus: list[dict]) -> str:
 
 
 REQUESTS_DIR = Path(__file__).parent / "requests"  # approved drafts. Not in git.
+PENDING = "pending"  # what approve returns when the user will decide after the answer
 SOURCE = re.compile(r"\[([\w.-]+\.pdf) p\.([1-9][0-9]{0,3})\]", re.ASCII)
 
 
@@ -540,11 +541,16 @@ def save_request(text: str) -> Path:
     stamp = time.strftime("%Y%m%d-%H%M%S")
     path = REQUESTS_DIR / f"prior-auth-{stamp}.txt"
     count = 1
-    while path.exists():  # a second draft in the same second must not replace the first
-        count += 1
-        path = REQUESTS_DIR / f"prior-auth-{stamp}-{count}.txt"
-    path.write_text(text + "\n")
-    return path
+    while True:
+        try:
+            # "x" refuses to open a file that is already there, so a second draft in the
+            # same second cannot replace the first, even when two are saved at once
+            with path.open("x") as f:
+                f.write(text + "\n")
+            return path
+        except FileExistsError:
+            count += 1
+            path = REQUESTS_DIR / f"prior-auth-{stamp}-{count}.txt"
 
 
 EMBED_MODEL = "voyage-4"
@@ -781,7 +787,8 @@ def run_tool(
     to the model.
 
     draft_prior_auth is the one tool that changes anything, and only after approve(text)
-    returns True. With no approve function the draft is never saved.
+    returns True. With no approve function the draft is never saved. When approve returns
+    PENDING the caller holds the draft and saves it later if the user says yes.
     """
     result = {"type": "tool_result", "tool_use_id": block.id}
     schema = next((t["input_schema"] for t in TOOLS if t["name"] == block.name), None)
@@ -794,12 +801,18 @@ def run_tool(
             return {**result, "content": f"The draft was not accepted: {e}", "is_error": True}
         if approve is None:
             content = "No one is here to approve the draft, so it was not saved. Show it to the user."
-        elif approve(text) is True:  # nothing but a plain yes saves
+        elif (verdict := approve(text)) is True:  # nothing but a plain yes saves
             try:
                 content = f"The user approved the draft. It was saved to requests/{save_request(text).name}."
             except OSError as e:
                 print(f"  save error: {type(e).__name__}: {e}")
                 content = "The user approved the draft, but it could not be saved."
+        elif verdict == PENDING:
+            content = (
+                "The draft is not saved yet. The user sees it below your answer with Approve "
+                "and Decline buttons, so do not repeat it. Say what you drafted and ask them "
+                "to check it."
+            )
         else:
             content = "The user declined the draft. Nothing was saved."
         return {**result, "content": f"{content}\n\n{text}"}
@@ -835,7 +848,8 @@ def run_agent(
 ) -> dict:
     """Answer one question. Returns the answer with its model calls, tokens, cost and time.
 
-    approve is called with the text of a drafted request and returns whether to save it.
+    approve is called with the text of a drafted request and returns whether to save it,
+    or PENDING when the user will decide after the answer.
     Left out, as in the eval runs, nothing is ever saved.
     The cost covers the Claude calls only. Voyage search calls are not counted.
     """

@@ -10,7 +10,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StringConstraints, field_validator
 
-from fineprint import SOURCE, load_index, run_agent
+from drafts import Waiting
+from fineprint import PENDING, SOURCE, load_index, run_agent, save_request
 from limits import Budget, RateLimit
 
 MAX_QUESTION_CHARS = 500  # a question is a sentence or two. Longer input only costs tokens.
@@ -24,6 +25,7 @@ DAILY_CAP_USD = float(os.environ.get("FINEPRINT_DAILY_CAP_USD", "0.10"))
 
 budget = Budget(Path(__file__).parent / "spend.json", DAILY_CAP_USD)
 rate = RateLimit(RATE_LIMIT, RATE_WINDOW)
+waiting = Waiting()
 
 
 class Question(BaseModel):
@@ -70,9 +72,19 @@ class Citation(BaseModel):
     sections: list[Section]  # the page's text as the index holds it
 
 
+class Draft(BaseModel):
+    id: str  # what the page sends back to approve or decline it
+    text: str
+
+
+class Decision(BaseModel):
+    saved: str | None  # the file an approved draft went to. None after a decline.
+
+
 class Answer(BaseModel):
     answer: str
     citations: list[Citation]
+    draft: Draft | None  # a request the agent drafted, waiting for a yes or no
     model_calls: int
     cost_usd: float
     seconds: float
@@ -110,7 +122,7 @@ async def guard_posts(request: Request, call_next):
         address = request.client.host if request.client else "unknown"
         if not rate.allow(address):
             return JSONResponse(
-                {"detail": "Too many questions. Wait a minute and try again."},
+                {"detail": "Too many requests. Wait a minute and try again."},
                 status_code=429,
                 headers={"Retry-After": str(RATE_WINDOW)},
             )
@@ -181,23 +193,61 @@ def health() -> dict:
 # each request on a worker thread and the server keeps answering others.
 @app.post("/ask")
 def ask(body: Question, request: Request) -> Answer:
-    """Answer one question. No approve function is passed, so a draft is never saved."""
+    """Answer one question. A draft the agent wrote is held, not saved, and sent back
+    with an id. It is saved only if that id is approved in a second request."""
     if not budget.has_room():
         raise HTTPException(
             status_code=503, detail="Today's budget for answers is used up. Try again tomorrow."
         )
     state = request.app.state
-    run = run_agent(body.question, state.corpus, state.vectors)
+    drafted = []
+
+    def hold(text: str) -> str:
+        """Stands in for the user's yes or no, which comes after the answer."""
+        drafted.append(text)
+        return PENDING
+
+    run = run_agent(body.question, state.corpus, state.vectors, approve=hold)
     budget.add(run["cost_usd"])  # a run that gave up still used tokens
     if run["answer"].startswith(STOPPED):  # the model was unreachable or the run hit a limit
         raise HTTPException(status_code=503, detail=run["answer"])
     return Answer(
         answer=run["answer"],
         citations=cited_pages(run["answer"], state.corpus),
+        # if the agent drafted more than once, the last draft is the one it settled on
+        draft=Draft(id=waiting.add(drafted[-1]), text=drafted[-1]) if drafted else None,
         model_calls=run["model_calls"],
         cost_usd=run["cost_usd"],
         seconds=run["seconds"],
     )
+
+
+def waiting_draft(draft_id: str) -> str:
+    """The text of a draft that is still waiting, taken off the list."""
+    text = waiting.take(draft_id)
+    if text is None:
+        raise HTTPException(
+            status_code=404, detail="This draft is no longer waiting. Ask for it again."
+        )
+    return text
+
+
+@app.post("/drafts/{draft_id}/approve")
+def approve_draft(draft_id: str) -> Decision:
+    """Save a draft the user said yes to. This is the only place the API writes a request."""
+    text = waiting_draft(draft_id)
+    try:
+        return Decision(saved=save_request(text).name)
+    except OSError as e:
+        print(f"  save error: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail="The draft was approved but could not be saved.")
+
+
+@app.post("/drafts/{draft_id}/decline")
+def decline_draft(draft_id: str) -> Decision:
+    """Forget a draft the user said no to. Nothing is written."""
+    waiting_draft(draft_id)
+    return Decision(saved=None)
 
 
 # The built web page, when there is one (`make web`). Mounted last, so the routes above

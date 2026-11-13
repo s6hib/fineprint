@@ -3,14 +3,15 @@ import type { FormEvent, RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { ask, MAX_QUESTION_CHARS } from './api'
-import type { Answer, Citation } from './api'
+import { ApiError, ask, decide, MAX_QUESTION_CHARS } from './api'
+import type { Answer, Citation, Draft } from './api'
 import { fromHref, label, markCitations } from './citations'
 
 const EXAMPLES = [
   'Does UHC cover bilateral cochlear implants for adults?',
   'What does HCPCS code A0431 mean?',
   'Is a taxi ride to the emergency room covered as ambulance transport?',
+  'Draft a prior-authorization request for cochlear implantation, CPT 69930.',
 ]
 
 type State =
@@ -191,6 +192,8 @@ function Result({ result }: { result: Answer }) {
         </>
       )}
 
+      {result.draft && <DraftCard draft={result.draft} />}
+
       <p className="usage">
         {result.model_calls} model {result.model_calls === 1 ? 'call' : 'calls'} · ${result.cost_usd.toFixed(4)} · {result.seconds} s
       </p>
@@ -200,6 +203,73 @@ function Result({ result }: { result: Answer }) {
       {open &&
         createPortal(<Source citation={open} panel={panel} onClose={close} />, document.body)}
     </article>
+  )
+}
+
+type Verdict =
+  | { status: 'waiting'; problem?: string }
+  | { status: 'sending' }
+  | { status: 'approved'; file: string }
+  | { status: 'declined' }
+  | { status: 'gone'; problem: string } // the server no longer holds this draft
+
+/** A request the agent drafted, with the two buttons that decide whether it is saved. */
+function DraftCard({ draft }: { draft: Draft }) {
+  const [verdict, setVerdict] = useState<Verdict>({ status: 'waiting' })
+  const outcome = useRef<HTMLParagraphElement>(null)
+
+  async function send(approve: boolean) {
+    setVerdict({ status: 'sending' })
+    try {
+      const file = await decide(draft, approve)
+      setVerdict(file === null ? { status: 'declined' } : { status: 'approved', file })
+    } catch (e) {
+      const problem = e instanceof Error ? e.message : String(e)
+      // A 404 means the draft was used or waited too long, so the buttons can do no more.
+      setVerdict(
+        e instanceof ApiError && e.status === 404
+          ? { status: 'gone', problem }
+          : { status: 'waiting', problem },
+      )
+    }
+  }
+
+  const open = verdict.status === 'waiting' || verdict.status === 'sending'
+
+  // The buttons leave the page once the draft is decided, and focus would be dropped
+  // with them. Put it on the line that says what happened.
+  useEffect(() => {
+    if (!open) outcome.current?.focus()
+  }, [open])
+  return (
+    <section className="draft" aria-labelledby="draft-title">
+      <h2 id="draft-title">Drafted request</h2>
+      <pre>{draft.text}</pre>
+      {open && (
+        <div className="row">
+          <p>Nothing is saved unless you approve it.</p>
+          <div className="choices">
+            <button type="button" disabled={verdict.status === 'sending'} onClick={() => void send(false)}>
+              Decline
+            </button>
+            <button
+              type="button"
+              className="primary"
+              disabled={verdict.status === 'sending'}
+              onClick={() => void send(true)}
+            >
+              Approve and save
+            </button>
+          </div>
+        </div>
+      )}
+      {/* Read out as it changes: the answer sits in the page's live region. */}
+      <p className={'problem' in verdict ? 'verdict problem' : 'verdict'} ref={outcome} tabIndex={-1}>
+        {verdict.status === 'approved' && `Approved. Saved as ${verdict.file}.`}
+        {verdict.status === 'declined' && 'Declined. Nothing was saved.'}
+        {'problem' in verdict && verdict.problem}
+      </p>
+    </section>
   )
 }
 

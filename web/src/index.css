@@ -113,7 +113,8 @@ button:disabled {
   opacity: 0.55;
 }
 
-button[type='submit'] {
+button[type='submit'],
+button.primary {
   padding: 0.55rem 1.25rem;
   font-weight: 600;
   color: var(--accent-text);
@@ -294,6 +295,64 @@ article td {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* A drafted request and the two buttons that decide it. */
+.draft {
+  margin-top: 1.5rem;
+  padding-top: 0.25rem;
+  border-top: 1px solid var(--line);
+}
+
+.draft pre {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.draft .row {
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.draft .row p {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.choices {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.choices button:not(.primary) {
+  padding: 0.55rem 1rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+}
+
+.verdict {
+  margin: 0.75rem 0 0;
+  font-size: 0.9rem;
+}
+
+.verdict:empty {
+  margin: 0; /* kept in the page while empty, so a screen reader hears it fill in */
+}
+
+.verdict:focus {
+  outline: none; /* the page moves focus here itself once the draft is decided */
+}
+
+.verdict.problem {
+  color: var(--error-text);
 }
 
 .usage {
