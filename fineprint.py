@@ -358,15 +358,44 @@ def search_policies(
     hits = [corpus[i] for i in rerank(query, fused, corpus, top_k)]
 
     return (
-        "\n\n---\n\n".join(
-            f"[{c['file']} p.{c['page']}]\n"
-            f"{c['title']} ({c['payer']}), policy {c['policy_number']}, "
-            f"effective {c['effective_date']}\n"
-            f"{c['heading']}\n{c['text'][:4000]}"
-            for c in hits
-        )
+        "\n\n---\n\n".join(f"{chunk_header(c)}\n{c['text'][:4000]}" for c in hits)
         or "No matching chunks."
     )
+
+
+def chunk_header(c: dict) -> str:
+    """The three lines above a chunk's text: its [file p.N] tag, its policy, its heading."""
+    return (
+        f"[{c['file']} p.{c['page']}]\n"
+        f"{c['title']} ({c['payer']}), policy {c['policy_number']}, "
+        f"effective {c['effective_date']}\n"
+        f"{c['heading']}"
+    )
+
+
+MAX_CODE_HITS = 5  # chunks shown for one code
+
+
+def lookup_code(code: str, corpus: list[dict]) -> str:
+    """The second tool. Every chunk that mentions a billing code or modifier, code tables first.
+
+    Plain text matching over the chunks, so it calls no API and costs nothing. The whole
+    chunk is returned because a table's group headers and notes change what a row means.
+    """
+    code = re.sub(r"^(CPT|HCPCS|MODIFIER)\s+", "", code.strip().upper()).strip(" .,;:*()'\"-")
+    if not re.fullmatch(r"[A-Z0-9][A-Z0-9.]{0,7}", code):
+        return "That is not a billing code. Give one code, such as 43775 or A0431."
+    whole = re.compile(rf"(?<![A-Za-z0-9.]){re.escape(code)}(?![A-Za-z0-9]|\.\d)")
+    found = [c for c in corpus if whole.search(c["text"])]
+    if not found:
+        return f"{code} does not appear in these policies."
+    # Code tables first. A number can also turn up in a study or a reference list.
+    found.sort(key=lambda c: not c["heading"].startswith("Applicable"))
+    shown = "\n\n---\n\n".join(
+        f"{chunk_header(c)}\n{c['text']}" for c in found[:MAX_CODE_HITS]
+    )
+    more = len(found) - MAX_CODE_HITS
+    return shown + (f"\n\n({more} more places not shown.)" if more > 0 else "")
 
 
 EMBED_MODEL = "voyage-4"
@@ -457,15 +486,31 @@ TOOLS = [
             },
             "required": ["query"],
         },
-    }
+    },
+    {
+        "name": "lookup_code",
+        "description": "Find every place one billing code or modifier (CPT, HCPCS, such as 43775, A0431 or QL) appears in the policies. Returns each chunk that mentions it, code tables first, tagged [filename.pdf p.N]. It tells you what the code is. Most code tables don't say whether the service is covered: use search_policies with the procedure's name for that.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string",
+                    "description": "One code or modifier, for example 43889.",
+                }
+            },
+            "required": ["code"],
+        },
+    },
 ]
 
+TOOL_ARG = {"search_policies": "query", "lookup_code": "code"}  # each tool's one argument
+
 SYSTEM = """\
-You answer questions about UnitedHealthcare commercial medical policies. Your only source is the search_policies tool. What you already know about insurance, billing codes or other insurers is not a source.
+You answer questions about UnitedHealthcare commercial medical policies. Your only sources are the search_policies and lookup_code tools. What you already know about insurance, billing codes or other insurers is not a source.
 
 How to search
 - Search before you answer, and search again when the first results don't settle the question.
-- A question about a billing code usually takes two searches: one for the code, to learn which procedure it is, and one for that procedure by name, to find whether it is covered.
+- For a question about a billing code, use lookup_code to learn which procedure the code is. If the table doesn't say whether the code is covered, search for the procedure by name.
 - Each chunk names its section above the text. Clinical Evidence and References are background: studies and what other organizations recommend. Never present them as UnitedHealthcare's rule. The rule is usually under Coverage Rationale or Benefit Considerations. If background is all you found, search again for the rule.
 - If a list of criteria looks cut off, search for the rest before you answer.
 
@@ -527,13 +572,16 @@ def run_tool(block, corpus: list[dict], db: sqlite3.Connection, vectors: list[li
     to the model.
     """
     result = {"type": "tool_result", "tool_use_id": block.id}
-    if block.name != "search_policies":
+    if block.name not in TOOL_ARG:
         return {**result, "content": f"There is no tool named {block.name}.", "is_error": True}
-    query = block.input.get("query")
-    if not isinstance(query, str) or not query.strip():
-        return {**result, "content": "search_policies needs a query string.", "is_error": True}
+    arg = block.input.get(TOOL_ARG[block.name])
+    if not isinstance(arg, str) or not arg.strip():
+        content = f"{block.name} needs a {TOOL_ARG[block.name]} string."
+        return {**result, "content": content, "is_error": True}
     try:
-        return {**result, "content": search_policies(query, corpus, db, vectors)}
+        if block.name == "lookup_code":
+            return {**result, "content": lookup_code(arg, corpus)}
+        return {**result, "content": search_policies(arg, corpus, db, vectors)}
     except VOYAGE_DOWN as e:
         print(f"  tool error: {type(e).__name__}: {e}")
         return {**result, "content": "The search failed. Try once more.", "is_error": True}
