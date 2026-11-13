@@ -460,13 +460,26 @@ TOOLS = [
     }
 ]
 
-SYSTEM = (
-    "You answer questions about UnitedHealthcare medical policies using only the "
-    "search_policies tool. Every claim must cite its source with the exact tag "
-    "that heads the chunk, for example [uhc-example-policy.pdf p.3]. "
-    "Never write the word 'file' in a citation. "
-    "If the chunks don't answer the question, say so."
-)
+SYSTEM = """\
+You answer questions about UnitedHealthcare commercial medical policies. Your only source is the search_policies tool. What you already know about insurance, billing codes or other insurers is not a source.
+
+How to search
+- Search before you answer, and search again when the first results don't settle the question.
+- A question about a billing code usually takes two searches: one for the code, to learn which procedure it is, and one for that procedure by name, to find whether it is covered.
+- Each chunk names its section above the text. Clinical Evidence and References are background: studies and what other organizations recommend. Never present them as UnitedHealthcare's rule. The rule is usually under Coverage Rationale or Benefit Considerations. If background is all you found, search again for the rule.
+- If a list of criteria looks cut off, search for the rest before you answer.
+
+How to answer
+- Start with the direct answer.
+- Give every condition that applies. When coverage depends on criteria, list all of them, including general requirements that apply to every patient. An answer that leaves out a condition is wrong.
+- Say only what the chunks say. Don't add a billing code, a rule, or a contrast with a case the question didn't ask about unless a chunk states it.
+- Cite every claim with the exact tag that heads its chunk, for example [uhc-example-policy.pdf p.3]. Never write the word 'file' in a citation.
+- A file whose name ends in -scan was read by OCR, which can misread a character. If it disagrees with another copy of the same policy, go with the other copy and don't report the difference as a second policy.
+
+When the policies don't answer
+- If the question is about another insurer, say you only have UnitedHealthcare policies and stop. Don't answer from UnitedHealthcare policy instead.
+- If your searches found nothing that answers the question, say the policies you can search don't address it. That is different from "not covered": only say a service is not covered when a chunk says so. Don't guess.
+"""
 
 MODEL = "claude-haiku-5-5"
 
@@ -502,6 +515,7 @@ def extract_metadata(text: str) -> PolicyMeta:
 
 
 MAX_TURNS = 6
+MAX_TOKENS = 2048  # output cap for one model call. The model's thinking counts toward it.
 
 
 def run_tool(block, corpus: list[dict], db: sqlite3.Connection, vectors: list[list[float]]) -> dict:
@@ -538,13 +552,15 @@ def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> 
     calls = 0
     answer = "Stopped: too many tool calls."
 
-    for _ in range(MAX_TURNS):
+    for turn in range(MAX_TURNS):
+        last = turn == MAX_TURNS - 1  # no more searching: answer from what was found
         try:
             response = client.messages.create(
                 model=MODEL,
-                max_tokens=1024,
+                max_tokens=MAX_TOKENS,
                 system=SYSTEM,
                 tools=TOOLS,
+                tool_choice={"type": "none" if last else "auto"},
                 messages=messages,
             )
         except CLAUDE_DOWN as e:  # still failing after the retries
@@ -558,6 +574,9 @@ def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> 
 
         if response.stop_reason != "tool_use":
             answer = "".join(b.text for b in response.content if b.type == "text")
+            if response.stop_reason == "max_tokens":
+                print("  cut off at MAX_TOKENS")
+                answer = answer or "Stopped: the answer ran past the length limit."
             break
 
         results = []
