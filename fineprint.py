@@ -398,6 +398,77 @@ def lookup_code(code: str, corpus: list[dict]) -> str:
     return shown + (f"\n\n({more} more places not shown.)" if more > 0 else "")
 
 
+MAX_SECTION_CHARS = 10000  # a few thousand tokens, enough for any section that holds rules
+
+
+def squash(text: str) -> str:
+    """Lower case with runs of spaces closed up, so OCR spacing doesn't break a comparison."""
+    return re.sub(r"\s+", " ", text).strip().lower()
+
+
+def get_policy(policy: str, section: str, corpus: list[dict]) -> str:
+    """The third tool. One whole section of one policy in page order, or the list of its sections.
+
+    Search returns the three best chunks, which can miss part of a list of criteria.
+    This returns the section from start to end. Plain lookups over the chunks, no API call.
+    """
+    files = {}  # file name -> its chunks, in page order
+    for c in sorted(corpus, key=lambda c: c["page"]):
+        files.setdefault(c["file"], []).append(c)
+    want = squash(policy).removesuffix(".pdf")
+    filler = {"the", "policy", "unitedhealthcare", "uhc", "pdf"}
+    words = [w for w in re.findall(r"[a-z0-9]+", want) if w not in filler]
+    matches = [
+        f
+        for f, cs in files.items()
+        if want in (f.removesuffix(".pdf"), cs[0]["policy_number"].lower())
+    ] or [
+        f
+        for f, cs in files.items()
+        if words and all(w in f"{f} {cs[0]['title']}".lower() for w in words)
+    ]
+    if len(matches) != 1:
+        listing = "\n".join(
+            f"{f}: {cs[0]['title']}, policy {cs[0]['policy_number']}" for f, cs in files.items()
+        )
+        problem = "More than one policy matches" if matches else "No policy matches"
+        return f"{problem} {policy!r}. Give one of these file names:\n{listing}"
+    chunks = files[matches[0]]
+    title = squash(chunks[0]["title"])
+    want = squash(section)
+
+    def in_section(c: dict) -> bool:
+        """The name is in the chunk's heading path, or ends with its section ("Rationale")."""
+        levels = [squash(level) for level in c["heading"].split(" > ")]
+        if levels[0] == title:  # the page-1 chunk under the policy's own name
+            return want == title
+        whole = re.compile(rf"(?<![a-z0-9]){re.escape(want)}(?![a-z0-9])")  # whole words only
+        return any(whole.search(level) for level in levels) or want.endswith(levels[0])
+
+    picked = [c for c in chunks if want and in_section(c)]
+    if not picked:
+        pages = {}
+        for c in chunks:
+            pages.setdefault(c["heading"].split(" > ")[0], []).append(c["page"])
+        listing = "\n".join(f"{name} (p.{min(ps)}-{max(ps)})" for name, ps in pages.items())
+        problem = f"No section matches {section!r}. " if want else ""
+        return f"{problem}Sections of {matches[0]}:\n{listing}"
+    first = picked[0]
+    out = (
+        f"{first['title']} ({first['payer']}), policy {first['policy_number']}, "
+        f"effective {first['effective_date']}"
+    )
+    for c in picked:
+        piece = f"\n\n[{c['file']} p.{c['page']}]\n{c['heading']}\n{c['text']}"
+        if len(out) + len(piece) > MAX_SECTION_CHARS:
+            return out + (
+                f"\n\n(Stopped at {MAX_SECTION_CHARS:,} characters. The rest of this "
+                "section is not shown. Use search_policies to find what you need in it.)"
+            )
+        out += piece
+    return out
+
+
 EMBED_MODEL = "voyage-4"
 
 TIMEOUT = 60  # seconds before one API call is given up on
@@ -501,18 +572,34 @@ TOOLS = [
             "required": ["code"],
         },
     },
+    {
+        "name": "get_policy",
+        "description": "Read one whole section of one policy from start to end, for example the Coverage Rationale of the bariatric surgery policy. Use it when the answer depends on a complete list of criteria or conditions, which a search can return only part of. Leave section empty to list the policy's sections. Each part is tagged [filename.pdf p.N].",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "policy": {
+                    "type": "string",
+                    "description": "The policy's file name, or a word from its file name or title, for example bariatric.",
+                },
+                "section": {
+                    "type": "string",
+                    "description": "The section's name, for example Coverage Rationale, Benefit Considerations or Definitions. Empty lists the sections.",
+                },
+            },
+            "required": ["policy"],
+        },
+    },
 ]
 
-TOOL_ARG = {"search_policies": "query", "lookup_code": "code"}  # each tool's one argument
-
 SYSTEM = """\
-You answer questions about UnitedHealthcare commercial medical policies. Your only sources are the search_policies and lookup_code tools. What you already know about insurance, billing codes or other insurers is not a source.
+You answer questions about UnitedHealthcare commercial medical policies. Your only sources are the search_policies, lookup_code and get_policy tools. What you already know about insurance, billing codes or other insurers is not a source.
 
 How to search
 - Search before you answer, and search again when the first results don't settle the question.
 - For a question about a billing code, use lookup_code to learn which procedure the code is. If the table doesn't say whether the code is covered, search for the procedure by name.
 - Each chunk names its section above the text. Clinical Evidence and References are background: studies and what other organizations recommend. Never present them as UnitedHealthcare's rule. The rule is usually under Coverage Rationale or Benefit Considerations. If background is all you found, search again for the rule.
-- If a list of criteria looks cut off, search for the rest before you answer.
+- A search returns three chunks, which can be only part of a list. When the answer depends on a full set of criteria or conditions, read the whole section with get_policy before you answer.
 
 How to answer
 - Start with the direct answer.
@@ -572,16 +659,22 @@ def run_tool(block, corpus: list[dict], db: sqlite3.Connection, vectors: list[li
     to the model.
     """
     result = {"type": "tool_result", "tool_use_id": block.id}
-    if block.name not in TOOL_ARG:
+    schema = next((t["input_schema"] for t in TOOLS if t["name"] == block.name), None)
+    if schema is None:
         return {**result, "content": f"There is no tool named {block.name}.", "is_error": True}
-    arg = block.input.get(TOOL_ARG[block.name])
-    if not isinstance(arg, str) or not arg.strip():
-        content = f"{block.name} needs a {TOOL_ARG[block.name]} string."
-        return {**result, "content": content, "is_error": True}
+    args = {name: block.input.get(name) for name in schema["properties"]}
+    for name, value in args.items():
+        if value is None and name not in schema["required"]:
+            args[name] = value = ""  # an optional argument left out
+        if not isinstance(value, str) or (name in schema["required"] and not value.strip()):
+            content = f"{block.name} needs a {name} string."
+            return {**result, "content": content, "is_error": True}
     try:
         if block.name == "lookup_code":
-            return {**result, "content": lookup_code(arg, corpus)}
-        return {**result, "content": search_policies(arg, corpus, db, vectors)}
+            return {**result, "content": lookup_code(args["code"], corpus)}
+        if block.name == "get_policy":
+            return {**result, "content": get_policy(args["policy"], args["section"], corpus)}
+        return {**result, "content": search_policies(args["query"], corpus, db, vectors)}
     except VOYAGE_DOWN as e:
         print(f"  tool error: {type(e).__name__}: {e}")
         return {**result, "content": "The search failed. Try once more.", "is_error": True}
