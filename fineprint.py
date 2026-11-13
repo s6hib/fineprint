@@ -851,13 +851,15 @@ def run_agent(
             response = client.messages.create(
                 model=MODEL,
                 max_tokens=MAX_TOKENS,
-                system=SYSTEM,
+                # Two cache points. The one on the system prompt covers the tools and the
+                # prompt, which are the same for every question. The one on the request as
+                # a whole covers the conversation so far, which the next call resends.
+                # A cached part is read at a tenth of the input price; writing it costs a
+                # quarter more than input.
+                system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
                 tools=TOOLS,
                 tool_choice={"type": "none" if last else "auto"},
                 messages=messages,
-                # Each call resends everything before it. This marks the end of the request
-                # as a cache point, so the next call reads the repeated part at a tenth
-                # of the input price. Writing to the cache costs a quarter more than input.
                 cache_control={"type": "ephemeral"},
             )
         except CLAUDE_DOWN as e:  # still failing after the retries

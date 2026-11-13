@@ -39,7 +39,7 @@ The top 20 from each are merged with reciprocal rank fusion, then Voyage `rerank
 uv run fineprint.py "Draft a prior authorization request for sleeve gastrectomy"
 ```
 
-The agent loop allows 6 model calls. On the sixth the model can no longer search and has to answer from what it has found. API calls time out after 60 seconds, and a failure that looks temporary, such as a rate limit, is retried up to 3 times. A search that still fails is reported to the model as an error, so it can try again or say it could not look. Every model call is marked for prompt caching, so the next call in the same question reads the part it repeats at a tenth of the input price.
+The agent loop allows 6 model calls. On the sixth the model can no longer search and has to answer from what it has found. API calls time out after 60 seconds, and a failure that looks temporary, such as a rate limit, is retried up to 3 times. A search that still fails is reported to the model as an error, so it can try again or say it could not look. Every model call is marked for prompt caching in two places: the system prompt and tools, which are the same for every question, and the conversation so far, which the next call in the same question resends. A cached part is read at a tenth of the input price.
 
 ## Eval
 
