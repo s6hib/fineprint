@@ -61,13 +61,13 @@ An earlier run is kept as `labeled_answers.jsonl`. `labels.jsonl` marks each of 
 uv run judge.py
 ```
 
-`judge.py` grades answers with a separate model call. Run like this it scores the judge itself: six labeled answers go to the judge as examples, and it is scored on the other 44: how many passing answers it keeps and how many failing answers it catches. For each answer the judge sees the question, the reference answer, and the text of the pages the reference comes from and the pages the answer cites. Its verdicts go to `judgments.jsonl`. The rubric and examples are the same for every case, so they are cached: after the first call the rest read them at a tenth of the input price, and the run prints what it cost.
+`judge.py` grades answers with a separate model call. Run like this it scores the judge itself: six labeled answers go to the judge as examples, and it is scored on the other 44: how many passing answers it keeps and how many failing answers it catches. For each answer the judge sees the question, the reference answer, the text of the pages the reference comes from and the pages the answer cites, and the line naming each policy that the agent is shown with every passage. Its verdicts go to `judgments.jsonl`. The rubric and examples are the same for every case, so they are cached: after the first call the rest read them at a tenth of the input price, and the run prints what it cost.
 
 ```sh
 uv run judge.py --cli
 ```
 
-With `--cli` the same rubric and cases go to a bigger model, Sonnet 5.5, through the Claude Code CLI (`claude -p`). The CLI uses whatever account it is signed in to, so with a Claude subscription login that run is not billed to the API key. The script removes the key from the CLI's environment and stops if the CLI reports it is using one. It needs `claude` on your PATH, or `CLAUDE_BIN` set to it.
+With `--cli` the same rubric and cases go to a bigger model, Sonnet 5.5, through the Claude Code CLI (`claude -p`). The CLI uses whatever account it is signed in to, so with a Claude subscription login that run is not billed to the API key. The script removes the key from the CLI's environment and stops if the CLI reports it is using one. Each answer is judged three times and the label most verdicts give is kept, since a single verdict on a borderline answer can go either way from run to run. It needs `claude` on your PATH, or `CLAUDE_BIN` set to it.
 
 ```sh
 uv run judge.py --grade --cli

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import random
@@ -14,7 +15,7 @@ from pydantic import BaseModel
 
 from citations import citations, page_text
 from evals import load_gold
-from fineprint import PRICE, RETRIES, TIMEOUT, cost_usd
+from fineprint import DATA_DIR, META_PATH, PRICE, RETRIES, TIMEOUT, cost_usd
 
 HERE = Path(__file__).parent
 LABELED = HERE / "labeled_answers.jsonl"  # the run that labels.jsonl marks pass or fail
@@ -25,13 +26,14 @@ GRADES = HERE / "grades.jsonl"  # the judge's verdicts on the latest run
 JUDGE_MODEL = "claude-haiku-5-5"  # priced by PRICE in fineprint.py
 CLI_MODEL = "claude-sonnet-5-5"  # the judge when run with --cli
 CLI_TIMEOUT = 300  # seconds for one verdict from the CLI
+CLI_VOTES = 3  # verdicts per case with --cli. The label most of them give is kept.
 EXAMPLE_FAILS = 3  # labeled rows shown to the judge as examples
 EXAMPLE_PASSES = 3
 SEED = 0
 
 RUBRIC = """You grade answers from a question-answering system over UnitedHealthcare medical policies.
 
-For each case you get the question, policy pages, a reference answer, and the system's answer. The pages are the ones the reference comes from and the ones the answer cites. Label the system's answer pass or fail.
+For each case you get the question, policy pages, a reference answer, and the system's answer. The pages are the ones the reference comes from and the ones the answer cites. Above the pages is one line per policy with its title, payer, policy number and effective date. The system is shown that line with every passage it reads, so an answer may state those details. A file whose name ends in -scan was read by OCR and its line can carry a misread character: an answer that reports the misreading as a different policy still fails. Label the system's answer pass or fail.
 
 Fail when the answer:
 - leaves out a condition or criterion that changes the answer
@@ -86,16 +88,31 @@ def split(rows: list[dict]) -> tuple[list[dict], list[dict]]:
     return examples, [r for r in rows if r["id"] not in example_ids]
 
 
+def policy_line(file: str) -> str | None:
+    """The line the agent sees above every chunk of a policy. None if it was never indexed."""
+    path = DATA_DIR / file
+    if not path.exists() or not META_PATH.exists():
+        return None
+    meta = json.loads(META_PATH.read_text()).get(hashlib.sha256(path.read_bytes()).hexdigest())
+    if meta is None:
+        return None
+    return (
+        f"{file}: {meta['title']} ({meta['payer']}), policy {meta['policy_number']}, "
+        f"effective {meta['effective_date']}"
+    )
+
+
 def source_text(row: dict) -> str:
-    """Text of the pages the gold answer lives on, plus every page the answer cites."""
+    """One line per policy, then the pages the gold answer lives on and every page the answer cites."""
     wanted = {(f, n) for f in row["files"][:1] for n in row["pages"]}
     wanted |= {(f, n) for _, f, n in citations(row["answer"])}
+    lines = [line for f in sorted({f for f, _ in wanted}) if (line := policy_line(f))]
     pages = [
         f"[{f} p.{n}]\n{text}"
         for f, n in sorted(wanted)
         if (text := page_text(f, n)) is not None
     ]
-    return "\n\n".join(pages) or "(none)"
+    return "\n\n".join(["\n".join(lines), *pages] if lines else pages) or "(none)"
 
 
 def case_text(row: dict) -> str:
@@ -186,6 +203,18 @@ def judge_cli(case: str, system: str) -> Verdict:
     raise RuntimeError(f"no verdict from the CLI: {problem}")
 
 
+def judge_voted(case: str, system: str) -> Verdict:
+    """Ask the CLI judge CLI_VOTES times and keep the label most verdicts give.
+
+    One verdict on a borderline answer can go either way from run to run. Voting makes
+    the result steadier. The reason kept is from a verdict that gave the winning label.
+    """
+    verdicts = [judge_cli(case, system) for _ in range(CLI_VOTES)]
+    fails = [v for v in verdicts if v.label == "fail"]
+    passes = [v for v in verdicts if v.label == "pass"]
+    return (fails if len(fails) > len(passes) else passes)[0]
+
+
 if __name__ == "__main__":
     examples, held_out = split(load_rows())
     system = system_prompt(examples)
@@ -194,7 +223,7 @@ if __name__ == "__main__":
     cases = [case_text(r) for r in rows]  # pages are read here: OCR can't run in threads
     if "--cli" in sys.argv:
         with ThreadPoolExecutor(4) as pool:
-            verdicts = list(pool.map(lambda c: judge_cli(c, system), cases))
+            verdicts = list(pool.map(lambda c: judge_voted(c, system), cases))
         tokens = None
     else:
         first = judge(cases[0], system)  # alone, so the cached prompt is stored once, not 8 times
@@ -218,7 +247,10 @@ if __name__ == "__main__":
             mine = [v for row, v in zip(held_out, verdicts) if row["label"] == label]
             print(f"{name}: {sum(v.label == label for v in mine)}/{len(mine)}")
     if tokens is None:
-        print(f"judge: {CLI_MODEL} through the claude CLI, nothing billed to the API key")
+        print(
+            f"judge: {CLI_MODEL} through the claude CLI, best of {CLI_VOTES} verdicts, "
+            "nothing billed to the API key"
+        )
     else:
         print(
             f"judge: {JUDGE_MODEL}, {tokens['cache_read_input_tokens']:,} tokens read from cache, "
