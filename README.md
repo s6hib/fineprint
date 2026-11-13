@@ -49,7 +49,7 @@ It prints recall@20 after fusion and recall@3 after reranking, and lists every q
 uv run judge.py
 ```
 
-`judge.py` grades the answers with a second model. Six labeled answers go to the judge as examples, and it is scored on the other 44: how many passing answers it keeps and how many failing answers it catches. For each answer the judge sees the question, the reference answer, and the text of the pages the reference comes from and the pages the answer cites. Its verdicts go to `judgments.jsonl`.
+`judge.py` grades the answers with a separate model call. Six labeled answers go to the judge as examples, and it is scored on the other 44: how many passing answers it keeps and how many failing answers it catches. For each answer the judge sees the question, the reference answer, and the text of the pages the reference comes from and the pages the answer cites. Its verdicts go to `judgments.jsonl`. The rubric and examples are the same for every case, so they are cached: after the first call the rest read them at a tenth of the input price, and the run prints what it cost.
 
 ```sh
 uv run citations.py
@@ -68,7 +68,7 @@ uv run citations.py
 | `answers.jsonl` | the agent's 50 answers |
 | `labels.jsonl` | pass or fail for each answer, with a reason |
 | `citations.py` | checks the citations and quotes in the answers |
-| `judge.py` | grades answers with a second model and compares it with the labels |
+| `judge.py` | grades answers with a separate model call and compares it with the labels |
 | `judgments.jsonl` | the judge's verdicts on the 44 answers it was scored on |
 | `Makefile` | `make eval` and `make answers` |
 | `fetch_data.sh` | downloads the policy PDFs into `data/` (git-ignored) |

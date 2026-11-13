@@ -9,11 +9,12 @@ from pydantic import BaseModel
 
 from citations import citations, page_text
 from evals import load_gold
+from fineprint import PRICE, RETRIES, TIMEOUT, cost_usd
 
 HERE = Path(__file__).parent
 JUDGMENTS = HERE / "judgments.jsonl"
 
-JUDGE_MODEL = "claude-sonnet-5-5"  # not the model that wrote the answers
+JUDGE_MODEL = "claude-haiku-5-5"  # priced by PRICE in fineprint.py
 EXAMPLE_FAILS = 3  # labeled rows shown to the judge as examples
 EXAMPLE_PASSES = 3
 SEED = 0
@@ -98,26 +99,35 @@ def system_prompt(examples: list[dict]) -> str:
     return f"{RUBRIC}\n\nLabeled examples:\n\n{shown}"
 
 
-def judge(case: str, system: str) -> Verdict:
-    """Ask the judge model for a verdict on one case."""
-    response = anthropic.Anthropic().messages.parse(
+def judge(case: str, system: str) -> tuple[Verdict, dict]:
+    """Ask the judge model for a verdict on one case. Returns it with the tokens used.
+
+    The system prompt is the same long text for every case, so it is marked for caching:
+    the first call stores it and later calls read it back at a tenth of the input price.
+    """
+    client = anthropic.Anthropic(max_retries=RETRIES, timeout=TIMEOUT)
+    response = client.messages.parse(
         model=JUDGE_MODEL,
         max_tokens=4000,
-        system=system,
+        system=[{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": case}],
         output_format=Verdict,
     )
     if response.parsed_output is None:
         raise RuntimeError(f"no verdict: {response.stop_reason}")
-    return response.parsed_output
+    tokens = {kind: getattr(response.usage, kind, None) or 0 for kind in PRICE}
+    return response.parsed_output, tokens
 
 
 if __name__ == "__main__":
     examples, held_out = split(load_rows())
     system = system_prompt(examples)
     cases = [case_text(r) for r in held_out]  # pages are read here: OCR can't run in threads
+    first = judge(cases[0], system)  # alone, so the cached prompt is stored once, not 8 times
     with ThreadPoolExecutor(8) as pool:
-        verdicts = list(pool.map(lambda c: judge(c, system), cases))
+        results = [first, *pool.map(lambda c: judge(c, system), cases[1:])]
+    verdicts = [v for v, _ in results]
+    tokens = {kind: sum(t[kind] for _, t in results) for kind in PRICE}
 
     with JUDGMENTS.open("w") as f:
         for row, v in zip(held_out, verdicts):
@@ -128,3 +138,9 @@ if __name__ == "__main__":
     for label, name in [("pass", "passes kept (TPR)"), ("fail", "fails caught (TNR)")]:
         mine = [v for row, v in zip(held_out, verdicts) if row["label"] == label]
         print(f"{name}: {sum(v.label == label for v in mine)}/{len(mine)}")
+    print(
+        f"judge: {tokens['cache_read_input_tokens']:,} tokens read from cache, "
+        f"{tokens['cache_creation_input_tokens']:,} written, "
+        f"{tokens['input_tokens']:,} other in, {tokens['output_tokens']:,} out, "
+        f"${cost_usd(tokens):.4f}"
+    )
