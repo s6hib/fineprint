@@ -29,7 +29,7 @@ Two searches run on every query and their results are fused:
 1. BM25 over an in-memory SQLite FTS5 table. Query terms are quoted so billing codes like `A0431` stay whole.
 2. Voyage `voyage-4` embeddings, scored by dot product against every chunk.
 
-The top 20 from each are merged with reciprocal rank fusion, then Voyage `rerank-3` picks the final 3 chunks the model sees. Each chunk comes with its policy's title, number and effective date. The agent loop allows up to 6 tool calls before it gives up.
+The top 20 from each are merged with reciprocal rank fusion, then Voyage `rerank-3` picks the final 3 chunks the model sees. Each chunk comes with its policy's title, number and effective date. The agent loop allows up to 6 tool calls before it gives up. API calls time out after 60 seconds, and a failure that looks temporary, such as a rate limit, is retried up to 3 times. A search that still fails is reported to the model as an error, so it can try again or say it could not look.
 
 ## Eval
 

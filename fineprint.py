@@ -371,11 +371,43 @@ def search_policies(
 
 EMBED_MODEL = "voyage-4"
 
+TIMEOUT = 60  # seconds before one API call is given up on
+RETRIES = 3  # more tries after a failure the SDK treats as temporary, such as a rate limit
+EMBED_BATCH = 100  # texts per embedding request, so each one finishes well inside TIMEOUT
+
+# Failures that can pass on their own. A bad key or a bug is not one and is left to crash.
+VOYAGE_DOWN = (
+    voyageai.error.RateLimitError,
+    voyageai.error.ServiceUnavailableError,
+    voyageai.error.ServerError,
+    voyageai.error.Timeout,
+    voyageai.error.APIConnectionError,
+    voyageai.error.APIError,  # a server error with no known status, such as a proxy's error page
+)
+CLAUDE_DOWN = (
+    anthropic.APIConnectionError,  # includes timeouts
+    anthropic.RateLimitError,
+    anthropic.InternalServerError,
+    anthropic.OverloadedError,
+)
+
+
+def voyage() -> voyageai.Client:
+    """A Voyage client with retries and a shorter timeout. The SDK's defaults are none and 10 minutes.
+
+    The SDK counts attempts, not retries, so RETRIES + 1 gives RETRIES retries.
+    """
+    return voyageai.Client(max_retries=RETRIES + 1, timeout=TIMEOUT)
+
 
 def embed(texts: list[str], input_type: str) -> list[list[float]]:
     """One vector per text. input_type is "document" for chunks, "query" for the question."""
-    client = voyageai.Client()
-    return client.embed(texts, model=EMBED_MODEL, input_type=input_type).embeddings
+    client = voyage()
+    vectors = []
+    for start in range(0, len(texts), EMBED_BATCH):
+        batch = texts[start : start + EMBED_BATCH]
+        vectors += client.embed(batch, model=EMBED_MODEL, input_type=input_type).embeddings
+    return vectors
 
 
 def vector_search(query: str, vectors: list[list[float]], top_k: int = 3) -> list[int]:
@@ -397,7 +429,7 @@ def rerank(
     """Score each candidate chunk against the query with a reranker. Chunk positions, best first."""
     docs = [chunk_text(corpus[i]) for i in candidates]
     results = (
-        voyageai.Client().rerank(query, docs, model=RERANK_MODEL, top_k=top_k).results
+        voyage().rerank(query, docs, model=RERANK_MODEL, top_k=top_k).results
     )
     return [candidates[r.index] for r in results]
 
@@ -454,7 +486,7 @@ def cost_usd(tokens: dict) -> float:
 
 def extract_metadata(text: str) -> PolicyMeta:
     """Ask the model for payer, title, policy number and effective date from page 1."""
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(max_retries=RETRIES, timeout=TIMEOUT)
     response = client.messages.parse(
         model=MODEL,
         max_tokens=300,
@@ -472,12 +504,33 @@ def extract_metadata(text: str) -> PolicyMeta:
 MAX_TURNS = 6
 
 
+def run_tool(block, corpus: list[dict], db: sqlite3.Connection, vectors: list[list[float]]) -> dict:
+    """Run one tool call and wrap what it returns as a tool_result.
+
+    A bad request from the model, or a search service that is still down after the
+    retries, goes back to the model as an error result. It can then fix its request,
+    search again or say it could not look. The details are printed here and not shown
+    to the model.
+    """
+    result = {"type": "tool_result", "tool_use_id": block.id}
+    if block.name != "search_policies":
+        return {**result, "content": f"There is no tool named {block.name}.", "is_error": True}
+    query = block.input.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return {**result, "content": "search_policies needs a query string.", "is_error": True}
+    try:
+        return {**result, "content": search_policies(query, corpus, db, vectors)}
+    except VOYAGE_DOWN as e:
+        print(f"  tool error: {type(e).__name__}: {e}")
+        return {**result, "content": "The search failed. Try once more.", "is_error": True}
+
+
 def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> dict:
     """Answer one question. Returns the answer with its model calls, tokens, cost and time.
 
     The cost covers the Claude calls only. Voyage search calls are not counted.
     """
-    client = anthropic.Anthropic()
+    client = anthropic.Anthropic(max_retries=RETRIES, timeout=TIMEOUT)
     messages = [{"role": "user", "content": question}]
     db = build_index(corpus)
     started = time.perf_counter()
@@ -486,13 +539,18 @@ def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> 
     answer = "Stopped: too many tool calls."
 
     for _ in range(MAX_TURNS):
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=1024,
-            system=SYSTEM,
-            tools=TOOLS,
-            messages=messages,
-        )
+        try:
+            response = client.messages.create(
+                model=MODEL,
+                max_tokens=1024,
+                system=SYSTEM,
+                tools=TOOLS,
+                messages=messages,
+            )
+        except CLAUDE_DOWN as e:  # still failing after the retries
+            print(f"  model error: {type(e).__name__}: {e}")
+            answer = "Stopped: the model could not be reached."
+            break
         calls += 1
         for kind in PRICE:
             tokens[kind] += getattr(response.usage, kind, None) or 0
@@ -506,10 +564,7 @@ def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> 
         for block in response.content:
             if block.type == "tool_use":
                 print(f"  -> {block.name}({block.input})")
-                output = search_policies(block.input["query"], corpus, db, vectors)
-                results.append(
-                    {"type": "tool_result", "tool_use_id": block.id, "content": output}
-                )
+                results.append(run_tool(block, corpus, db, vectors))
         messages.append({"role": "user", "content": results})
 
     return {
