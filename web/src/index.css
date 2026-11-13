@@ -188,10 +188,103 @@ article td {
   padding: 0 0.4rem;
   font-size: 0.78rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: inherit;
   white-space: nowrap;
   color: var(--cite-text);
   background: var(--cite-bg);
+  border: 0;
   border-radius: 4px;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.cite:hover {
+  text-decoration-style: solid;
+}
+
+/* The cited page. It sits at the right edge of the window, full width on a phone. */
+.source {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: min(30rem, 100%);
+  padding: 1.25rem 1.5rem 2rem;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px rgb(0 0 0 / 12%);
+}
+
+/* With room for both, the page moves over so the panel covers none of the answer. */
+@media (min-width: 76rem) {
+  body:has(.source) main {
+    margin-right: max(30rem, calc((100% - 44rem) / 2));
+  }
+}
+
+.source:focus {
+  outline: none; /* the page moves focus here itself when the panel opens */
+}
+
+.source header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.source h2 {
+  margin: 0;
+  font-size: 1.05rem;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+}
+
+.source h3 {
+  margin: 1.5rem 0 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.source .meta {
+  margin: 0.15rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.source .close {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--control-line);
+  border-radius: 8px;
+}
+
+.page-text {
+  margin: 0;
+  font-size: 0.9rem;
+  white-space: pre-wrap; /* the index keeps a line break between paragraphs and table rows */
+}
+
+.origin {
+  margin: 2rem 0 0;
+  padding-top: 1rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+}
+
+.origin a {
+  color: var(--accent);
+}
+
+.origin a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .sources {

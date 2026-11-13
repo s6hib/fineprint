@@ -1,9 +1,10 @@
-import { useState } from 'react'
-import type { FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { FormEvent, RefObject } from 'react'
+import { createPortal } from 'react-dom'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { ask, MAX_QUESTION_CHARS } from './api'
-import type { Answer } from './api'
+import type { Answer, Citation } from './api'
 import { fromHref, label, markCitations } from './citations'
 
 const EXAMPLES = [
@@ -102,29 +103,80 @@ export default function App() {
   )
 }
 
-function Result({ result }: { result: Answer }) {
-  const confirmed = new Set(result.citations.map((c) => `${c.file}:${c.page}`))
+// The panel is 30rem wide at most (index.css). Up to that width it fills the window.
+const PANEL_COVERS_PAGE = '(max-width: 30rem)'
+
+type Show = (citation: Citation, from: HTMLElement) => void
+
+/** A citation drawn as a small button that opens its page. */
+function Tag({ citation, onShow }: { citation: Citation; onShow: Show }) {
   return (
-    <article>
+    <button
+      type="button"
+      className="cite"
+      aria-haspopup="dialog"
+      onClick={(e) => onShow(citation, e.currentTarget)}
+    >
+      {label(citation)}
+    </button>
+  )
+}
+
+function Result({ result }: { result: Answer }) {
+  const [open, setOpen] = useState<Citation | null>(null)
+  const opener = useRef<HTMLElement | null>(null) // the tag that was pressed, to hand focus back
+  const panel = useRef<HTMLElement>(null)
+  const giveFocusBack = useRef(false)
+
+  const show = useCallback<Show>((citation, from) => {
+    opener.current = from
+    setOpen(citation)
+    panel.current?.focus() // already open on this page: opening it again changes nothing else
+  }, [])
+
+  const close = useCallback(() => {
+    // Hand focus back to the tag only if it was in the panel. Someone who pressed Escape
+    // while typing a new question keeps their place.
+    const active = document.activeElement
+    giveFocusBack.current = active === document.body || !!panel.current?.contains(active)
+    setOpen(null)
+  }, [])
+
+  // Runs after the panel is gone, when the page behind it can take focus again.
+  useEffect(() => {
+    if (!open && giveFocusBack.current) {
+      giveFocusBack.current = false
+      opener.current?.focus()
+    }
+  }, [open])
+
+  // Rendered once per answer. Opening the panel draws this component again, and a fresh
+  // render of the Markdown would replace every tag, including the one focus returns to.
+  const answer = useMemo(() => {
+    const confirmed = new Map(result.citations.map((c) => [`${c.file}:${c.page}`, c]))
+    return (
       <Markdown
         remarkPlugins={[remarkGfm]} // tables, which the policies' code lists can come back as
         disallowedElements={['img']} // an image would load from whatever address the model wrote
         components={{
-          // A citation arrives as a link (see markCitations). Draw it as a tag, but only
-          // if the API confirmed that page. Any other link the model wrote is shown as
-          // plain text, never as a live link.
+          // A citation arrives as a link (see markCitations). Draw it as a tag that opens
+          // the page, but only if the API confirmed that page. Any other link the model
+          // wrote is shown as plain text, never as a live link.
           a({ href, children }) {
-            const cited = fromHref(href)
-            return cited && confirmed.has(`${cited.file}:${cited.page}`) ? (
-              <span className="cite">{children}</span>
-            ) : (
-              <>{children}</>
-            )
+            const ref = fromHref(href)
+            const cited = ref && confirmed.get(`${ref.file}:${ref.page}`)
+            return cited ? <Tag citation={cited} onShow={show} /> : <>{children}</>
           },
         }}
       >
         {markCitations(result.answer, result.citations)}
       </Markdown>
+    )
+  }, [result, show])
+
+  return (
+    <article>
+      {answer}
 
       {result.citations.length > 0 && (
         <>
@@ -132,7 +184,7 @@ function Result({ result }: { result: Answer }) {
           <ul className="sources">
             {result.citations.map((c) => (
               <li key={`${c.file}:${c.page}`}>
-                <span className="cite">{label(c)}</span>
+                <Tag citation={c} onShow={show} />
               </li>
             ))}
           </ul>
@@ -142,6 +194,93 @@ function Result({ result }: { result: Answer }) {
       <p className="usage">
         {result.model_calls} model {result.model_calls === 1 ? 'call' : 'calls'} · ${result.cost_usd.toFixed(4)} · {result.seconds} s
       </p>
+
+      {/* Drawn at the end of <body>: inside this live region a screen reader would read
+          the whole page out, and the page behind has to be switched off separately. */}
+      {open &&
+        createPortal(<Source citation={open} panel={panel} onClose={close} />, document.body)}
     </article>
+  )
+}
+
+/** A panel at the side with the text of one cited page and a link to the publisher's copy. */
+function Source({
+  citation,
+  panel,
+  onClose,
+}: {
+  citation: Citation
+  panel: RefObject<HTMLElement | null>
+  onClose: () => void
+}) {
+  // Move focus into the panel when it opens or switches page, so a keyboard or screen
+  // reader user lands on the text they asked for.
+  useEffect(() => {
+    panel.current?.focus()
+    panel.current?.scrollTo(0, 0)
+  }, [citation, panel])
+
+  // On a narrow screen the panel covers everything, so the page behind it is switched
+  // off until the panel closes. Otherwise Tab would reach controls nobody can see.
+  useEffect(() => {
+    const main = document.querySelector('main')
+    const covers = window.matchMedia(PANEL_COVERS_PAGE)
+    const sync = () => {
+      if (main) main.inert = covers.matches
+    }
+    sync()
+    covers.addEventListener('change', sync)
+    return () => {
+      covers.removeEventListener('change', sync)
+      if (main) main.inert = false
+    }
+  }, [])
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <aside className="source" ref={panel} tabIndex={-1} role="dialog" aria-labelledby="source-title">
+      <header>
+        <div>
+          <h2 id="source-title">
+            {citation.title}, page {citation.page}
+          </h2>
+          <p className="meta">
+            UnitedHealthcare policy, effective {citation.effective_date}
+          </p>
+        </div>
+        <button type="button" className="close" onClick={onClose}>
+          Close
+        </button>
+      </header>
+
+      {citation.sections.map((section, i) => (
+        <section key={i}>
+          <h3>{section.heading}</h3>
+          <p className="page-text">{section.text}</p>
+        </section>
+      ))}
+
+      <p className="origin">
+        This is the page's text as fineprint read it.{' '}
+        {citation.url ? (
+          <>
+            <a href={citation.url} target="_blank" rel="noopener noreferrer">
+              Open the policy on uhcprovider.com
+            </a>{' '}
+            to see the original. UnitedHealthcare may have revised it since, so the page
+            number there can differ.
+          </>
+        ) : (
+          <>This copy was read from a scan, so there is no link to the original.</>
+        )}
+      </p>
+    </aside>
   )
 }

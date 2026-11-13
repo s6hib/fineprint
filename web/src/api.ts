@@ -1,6 +1,16 @@
 export const MAX_QUESTION_CHARS = 500 // the API turns away anything longer
 
-export type Citation = { file: string; page: number }
+export type Section = { heading: string; text: string }
+
+/** One page the answer cites, with that page's text as the index holds it. */
+export type Citation = {
+  file: string
+  page: number
+  title: string
+  effective_date: string
+  url: string | null // the publisher's copy, or null when there is no link
+  sections: Section[]
+}
 
 export type Answer = {
   answer: string

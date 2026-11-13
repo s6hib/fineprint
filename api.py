@@ -1,4 +1,5 @@
 import os
+import unicodedata
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -40,9 +41,33 @@ class Question(BaseModel):
         return value
 
 
+# Where the current version of each policy is published. The scanned copy has no address
+# of its own. The same five names are in fetch_data.sh.
+UHC_DOCS = "https://www.uhcprovider.com/content/dam/provider/docs/public/policies/comm-medical-drug/"
+SOURCE_URLS = {
+    f"uhc-{name}.pdf": f"{UHC_DOCS}{name}.pdf"
+    for name in (
+        "ambulance-services",
+        "bariatric-surgery",
+        "clinical-trials",
+        "cochlear-implants",
+        "cognitive-rehabilitation",
+    )
+}
+
+
+class Section(BaseModel):
+    heading: str
+    text: str
+
+
 class Citation(BaseModel):
     file: str
     page: int
+    title: str
+    effective_date: str
+    url: str | None  # the publisher's copy, opened at this page. None when there is no link.
+    sections: list[Section]  # the page's text as the index holds it
 
 
 class Answer(BaseModel):
@@ -99,18 +124,51 @@ async def guard_posts(request: Request, call_next):
     return await call_next(request)
 
 
+def readable(text: str) -> str:
+    """Swap symbol-font characters for a bullet. A browser has no glyph for them.
+
+    The PDFs draw bullets and arrows with private-use characters from a symbol font.
+    """
+    return "".join("\u2022" if unicodedata.category(ch) == "Co" else ch for ch in text).strip()
+
+
+def page_citation(chunks: list[dict]) -> Citation:
+    """One cited page, built from the chunks cut from it, in index order."""
+    first = chunks[0]
+    sections = []
+    for c in chunks:
+        # a long section was split into several chunks under one heading: join them again
+        if sections and sections[-1].heading == c["heading"]:
+            sections[-1].text += c["text"]
+        else:
+            sections.append(Section(heading=c["heading"], text=c["text"]))
+    for section in sections:
+        section.text = readable(section.text)
+    url = SOURCE_URLS.get(first["file"])
+    return Citation(
+        file=first["file"],
+        page=first["page"],
+        title=first["title"],
+        effective_date=first["effective_date"],
+        url=f"{url}#page={first['page']}" if url else None,
+        sections=sections,
+    )
+
+
 def cited_pages(answer: str, corpus: list[dict]) -> list[Citation]:
     """Each page the answer cites, once, in the order it first appears.
 
     A tag is kept only if a chunk in the index carries it, so every citation sent to the
-    browser is a page the agent could have read.
+    browser is a page the agent could have read. Each one comes with that page's text.
     """
-    known = {(c["file"], c["page"]) for c in corpus}
+    pages = {}  # (file, page) -> the chunks cut from that page
+    for c in corpus:
+        pages.setdefault((c["file"], c["page"]), []).append(c)
     found = {}  # a dict keeps first-seen order and drops repeats
     for m in SOURCE.finditer(answer):
         key = (m[1], int(m[2]))
-        if key in known:
-            found[key] = Citation(file=key[0], page=key[1])
+        if key in pages and key not in found:
+            found[key] = page_citation(pages[key])
     return list(found.values())
 
 

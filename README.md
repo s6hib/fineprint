@@ -20,7 +20,7 @@ make web      # build the page into web/dist (needs Node)
 make serve    # the API and the page on http://127.0.0.1:8000
 ```
 
-`api.py` puts the agent behind one endpoint, `POST /ask`, and serves the page. The page (`web/`, React and TypeScript) sends the question, shows the answer, and draws each citation the API confirmed as a tag. A citation is confirmed only if a chunk in the index carries that file and page. Three limits are checked before the model is called: a daily spending cap (`FINEPRINT_DAILY_CAP_USD`, default $0.10), 5 questions a minute per address, and a request size of 8,000 bytes.
+`api.py` puts the agent behind one endpoint, `POST /ask`, and serves the page. The page (`web/`, React and TypeScript) sends the question, shows the answer, and draws each citation the API confirmed as a tag. A citation is confirmed only if a chunk in the index carries that file and page. Clicking a tag opens a panel with that page's text as the index holds it and a link to the policy on uhcprovider.com. The PDFs themselves are not served. Three limits are checked before the model is called: a daily spending cap (`FINEPRINT_DAILY_CAP_USD`, default $0.10), 5 questions a minute per address, and a request size of 8,000 bytes.
 
 ## How a PDF becomes chunks
 
