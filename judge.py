@@ -17,7 +17,10 @@ from evals import load_gold
 from fineprint import PRICE, RETRIES, TIMEOUT, cost_usd
 
 HERE = Path(__file__).parent
-JUDGMENTS = HERE / "judgments.jsonl"
+LABELED = HERE / "labeled_answers.jsonl"  # the run that labels.jsonl marks pass or fail
+JUDGMENTS = HERE / "judgments.jsonl"  # the judge's verdicts on that run, to score the judge
+ANSWERS = HERE / "answers.jsonl"  # the latest run
+GRADES = HERE / "grades.jsonl"  # the judge's verdicts on the latest run
 
 JUDGE_MODEL = "claude-haiku-5-5"  # priced by PRICE in fineprint.py
 CLI_MODEL = "claude-sonnet-5-5"  # the judge when run with --cli
@@ -49,12 +52,14 @@ class Verdict(BaseModel):
     label: Literal["pass", "fail"]
 
 
+def read_answers(path: Path) -> dict[int, str]:
+    """The answer saved for each question id."""
+    return {r["id"]: r["answer"] for r in map(json.loads, path.read_text().splitlines())}
+
+
 def load_rows() -> list[dict]:
-    """One row per gold question: the question, reference, system answer and human label."""
-    answers = {
-        r["id"]: r["answer"]
-        for r in map(json.loads, (HERE / "answers.jsonl").read_text().splitlines())
-    }
+    """The labeled run. One row per gold question: question, reference, answer and human label."""
+    answers = read_answers(LABELED)
     labels = {
         r["id"]: r["label"]
         for r in map(json.loads, (HERE / "labels.jsonl").read_text().splitlines())
@@ -63,6 +68,12 @@ def load_rows() -> list[dict]:
         {**g, "reference": g["answer"], "answer": answers[g["id"]], "label": labels[g["id"]]}
         for g in load_gold()
     ]
+
+
+def load_latest() -> list[dict]:
+    """The latest run. The same rows with no label, since no one has marked these answers."""
+    answers = read_answers(ANSWERS)
+    return [{**g, "reference": g["answer"], "answer": answers[g["id"]]} for g in load_gold()]
 
 
 def split(rows: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -178,7 +189,9 @@ def judge_cli(case: str, system: str) -> Verdict:
 if __name__ == "__main__":
     examples, held_out = split(load_rows())
     system = system_prompt(examples)
-    cases = [case_text(r) for r in held_out]  # pages are read here: OCR can't run in threads
+    grading = "--grade" in sys.argv  # judge the latest run. Without it, score the judge.
+    rows = load_latest() if grading else held_out
+    cases = [case_text(r) for r in rows]  # pages are read here: OCR can't run in threads
     if "--cli" in sys.argv:
         with ThreadPoolExecutor(4) as pool:
             verdicts = list(pool.map(lambda c: judge_cli(c, system), cases))
@@ -190,15 +203,20 @@ if __name__ == "__main__":
         verdicts = [v for v, _ in results]
         tokens = {kind: sum(t[kind] for _, t in results) for kind in PRICE}
 
-    with JUDGMENTS.open("w") as f:
-        for row, v in zip(held_out, verdicts):
+    with (GRADES if grading else JUDGMENTS).open("w") as f:
+        for row, v in zip(rows, verdicts):
             f.write(json.dumps({"id": row["id"], "label": v.label, "why": v.why}) + "\n")
-            if v.label != row["label"]:
+            if grading and v.label == "fail":
+                print(f"  fail {row['id']}: {v.why}")
+            elif not grading and v.label != row["label"]:
                 print(f"  disagree {row['id']}: labeled {row['label']}, judged {v.label}: {v.why}")
 
-    for label, name in [("pass", "passes kept (TPR)"), ("fail", "fails caught (TNR)")]:
-        mine = [v for row, v in zip(held_out, verdicts) if row["label"] == label]
-        print(f"{name}: {sum(v.label == label for v in mine)}/{len(mine)}")
+    if grading:
+        print(f"judged pass: {sum(v.label == 'pass' for v in verdicts)}/{len(verdicts)}")
+    else:
+        for label, name in [("pass", "passes kept (TPR)"), ("fail", "fails caught (TNR)")]:
+            mine = [v for row, v in zip(held_out, verdicts) if row["label"] == label]
+            print(f"{name}: {sum(v.label == label for v in mine)}/{len(mine)}")
     if tokens is None:
         print(f"judge: {CLI_MODEL} through the claude CLI, nothing billed to the API key")
     else:

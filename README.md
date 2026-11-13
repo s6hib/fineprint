@@ -43,7 +43,7 @@ The agent loop allows 6 model calls. On the sixth the model can no longer search
 
 ## Eval
 
-`make eval` runs the three checks below in order. `make answers` runs the agent on all 50 questions again first, if the code has changed.
+`make eval` runs the three checks below in order: search recall, citations on the latest run, and the judge scored against the labeled run. `make answers` runs the agent on all 50 questions again, and `make grade` has the judge mark that run.
 
 `gold.jsonl` holds 50 questions with the answer and the file and pages it lives on: coverage criteria, exclusions, billing codes, definitions, policy metadata, and three questions the corpus can't answer.
 
@@ -53,13 +53,15 @@ uv run evals.py
 
 It prints recall@20 after fusion and recall@3 after reranking, and lists every question the reranker missed with whether fusion had found it. Out-of-corpus questions are skipped since there is no page to find.
 
-`answers.py` runs the agent on every gold question and saves what it said to `answers.jsonl`. `labels.jsonl` marks each answer pass or fail with a one-line reason.
+`answers.py` runs the agent on every gold question and saves what it said to `answers.jsonl`, with the model calls, tokens, cost and time each one took.
+
+An earlier run is kept as `labeled_answers.jsonl`. `labels.jsonl` marks each of its answers pass or fail with a one-line reason, and that run is what the judge is checked against.
 
 ```sh
 uv run judge.py
 ```
 
-`judge.py` grades the answers with a separate model call. Six labeled answers go to the judge as examples, and it is scored on the other 44: how many passing answers it keeps and how many failing answers it catches. For each answer the judge sees the question, the reference answer, and the text of the pages the reference comes from and the pages the answer cites. Its verdicts go to `judgments.jsonl`. The rubric and examples are the same for every case, so they are cached: after the first call the rest read them at a tenth of the input price, and the run prints what it cost.
+`judge.py` grades answers with a separate model call. Run like this it scores the judge itself: six labeled answers go to the judge as examples, and it is scored on the other 44: how many passing answers it keeps and how many failing answers it catches. For each answer the judge sees the question, the reference answer, and the text of the pages the reference comes from and the pages the answer cites. Its verdicts go to `judgments.jsonl`. The rubric and examples are the same for every case, so they are cached: after the first call the rest read them at a tenth of the input price, and the run prints what it cost.
 
 ```sh
 uv run judge.py --cli
@@ -68,23 +70,31 @@ uv run judge.py --cli
 With `--cli` the same rubric and cases go to a bigger model, Sonnet 5.5, through the Claude Code CLI (`claude -p`). The CLI uses whatever account it is signed in to, so with a Claude subscription login that run is not billed to the API key. The script removes the key from the CLI's environment and stops if the CLI reports it is using one. It needs `claude` on your PATH, or `CLAUDE_BIN` set to it.
 
 ```sh
+uv run judge.py --grade --cli
+```
+
+With `--grade` the judge marks the latest run in `answers.jsonl`, which has no labels, and writes its verdicts to `grades.jsonl`. The same six labeled answers are its examples.
+
+```sh
 uv run citations.py
 ```
 
-`citations.py` checks the citations in the saved answers with plain code and no model. It counts how many answers cite anything, how many citations point to a file and page that exist, how many answers cite a page the gold answer lives on, and how many quoted passages appear on a page the answer cites.
+`citations.py` checks the citations in the latest run, `answers.jsonl`, with plain code and no model. It counts how many answers cite anything, how many citations point to a file and page that exist, how many answers cite a page the gold answer lives on, and how many quoted passages appear on a page the answer cites.
 
 ## Files
 
 | File | What it is |
 |---|---|
-| `fineprint.py` | chunking, index, search tool, agent loop |
+| `fineprint.py` | chunking, index, the four tools, agent loop |
 | `evals.py` | recall over the gold set |
 | `gold.jsonl` | the 50 questions |
 | `answers.py` | runs the agent on every gold question |
-| `answers.jsonl` | the agent's 50 answers |
-| `labels.jsonl` | pass or fail for each answer, with a reason |
+| `answers.jsonl` | the agent's 50 answers from the latest run |
+| `grades.jsonl` | the judge's verdict on each of those |
+| `labeled_answers.jsonl` | the 50 answers from an earlier run |
+| `labels.jsonl` | pass or fail for each of those, with a reason |
 | `citations.py` | checks the citations and quotes in the answers |
-| `judge.py` | grades answers with a separate model call and compares it with the labels |
-| `judgments.jsonl` | the judge's verdicts on the 44 answers it was scored on |
-| `Makefile` | `make eval` and `make answers` |
+| `judge.py` | grades answers with a separate model call, and scores that judge against the labels |
+| `judgments.jsonl` | the judge's verdicts on the 44 labeled answers it was scored on |
+| `Makefile` | `make eval`, `make answers` and `make grade` |
 | `fetch_data.sh` | downloads the policy PDFs into `data/` (git-ignored) |
