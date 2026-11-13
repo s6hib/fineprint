@@ -15,6 +15,29 @@ uv run fineprint.py "Does UHC cover bilateral cochlear implants for adults?"
 
 The first run parses and embeds the PDFs and saves the result to `index.json`. Later runs read that file. When a PDF, `fineprint.py` or `uv.lock` changes, the chunks are cut again, but only chunks whose text is new are embedded.
 
+## Results
+
+Measured on the 50 questions in `gold.jsonl`, 47 of which the policies can answer. The two search rows use each question's own text as the query and were last run on 2026-11-13. The other rows are from the agent's run of 2026-11-12 on Claude Haiku 5.5. The Eval section explains each check. The judge rows need `--cli`, and the averages are worked out from `answers.jsonl`.
+
+| What was measured | Result |
+|---|---|
+| Searching with the question itself, the right page is among the 20 candidates | 47 of 47 |
+| The right page is in the 3 chunks left after reranking | 45 of 47 |
+| Answers that cite a page the reference answer is on | 47 of 47 |
+| Citations that point to a real file and page | 131 of 131 |
+| Quoted passages found on a page the answer cites | 19 of 19 |
+| Answers the judge passes | 47 of 50 |
+| Cost of the model calls for all 50 answers | $0.039 |
+| Model calls per question | 2.4 on average, 4 at most |
+| Time per question | 4.3 s on average |
+| Input tokens read from the prompt cache | 65% |
+
+The judge is Sonnet 5.5, asked three times per answer with the majority kept. Before its verdicts were used it was scored on 44 labeled answers from an earlier run: it kept 35 of the 38 passes and caught all 6 fails. In that earlier run, on Haiku 4.5 with one tool, 41 of 50 answers are labeled pass. The 41 comes from labels and the 47 from the judge, so they are two yardsticks and the gap between them is not a measured gain.
+
+The prompt was written from the failures on these same 50 questions, so 47 of 50 is not a score on questions the agent has never seen.
+
+The three answers that fail are all about bariatric surgery. The policy asks for both evaluations or, in their place, the preparatory regimen. Questions 1 and 3 make one evaluation required and offer the regimen in place of the other only. The chunk text drops the nesting of the policy's bullet list, which is the likely cause. Question 5 files the two-stage criteria under the adolescent section.
+
 ## Web app
 
 ```sh
@@ -22,7 +45,7 @@ make web      # build the page into web/dist (needs Node)
 make serve    # the API and the page on http://127.0.0.1:8000
 ```
 
-`api.py` puts the agent behind one endpoint, `POST /ask`, and serves the page. The page (`web/`, React and TypeScript) sends the question, shows the answer, and draws each citation the API confirmed as a tag. A citation is confirmed only if a chunk in the index carries that file and page. Clicking a tag opens a panel with that page's text as the index holds it and a link to the policy on uhcprovider.com. The PDFs themselves are not served. When the agent drafts a prior-authorization request, the API holds the draft in memory for 15 minutes and the page shows it with Approve and Decline buttons. The draft is written to `requests/` only after an approve. Three limits are checked before the model is called: a daily spending cap (`FINEPRINT_DAILY_CAP_USD`, default $0.10), 5 questions a minute per address, and a request size of 8,000 bytes.
+`api.py` puts the agent behind one endpoint, `POST /ask`, and serves the page. The page (`web/`, React and TypeScript) sends the question, shows the answer, and draws each citation the API confirmed as a tag. A citation is confirmed only if a chunk in the index carries that file and page. Clicking a tag opens a panel with that page's text as the index holds it and a link to the policy on uhcprovider.com. The PDFs themselves are not served. When the agent drafts a prior-authorization request, the API holds the draft in memory for 15 minutes and the page shows it with Approve and Decline buttons. The draft is written to `requests/` only after an approve. Three limits are checked before the model is called: a daily spending cap (`FINEPRINT_DAILY_CAP_USD`, default $0.10), 5 requests a minute per address, and a request size of 8,000 bytes.
 
 ### Deploy
 
