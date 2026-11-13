@@ -376,6 +376,12 @@ def chunk_header(c: dict) -> str:
 MAX_CODE_HITS = 5  # chunks shown for one code
 
 
+def has_code(code: str, text: str) -> bool:
+    """True when the code is in the text as a whole token, so 43 does not match 43889 or 43.1%."""
+    whole = rf"(?<![A-Za-z0-9.]){re.escape(code)}(?![A-Za-z0-9]|\.\d)"
+    return re.search(whole, text) is not None
+
+
 def lookup_code(code: str, corpus: list[dict]) -> str:
     """The second tool. Every chunk that mentions a billing code or modifier, code tables first.
 
@@ -385,8 +391,7 @@ def lookup_code(code: str, corpus: list[dict]) -> str:
     code = re.sub(r"^(CPT|HCPCS|MODIFIER)\s+", "", code.strip().upper()).strip(" .,;:*()'\"-")
     if not re.fullmatch(r"[A-Z0-9][A-Z0-9.]{0,7}", code):
         return "That is not a billing code. Give one code, such as 43775 or A0431."
-    whole = re.compile(rf"(?<![A-Za-z0-9.]){re.escape(code)}(?![A-Za-z0-9]|\.\d)")
-    found = [c for c in corpus if whole.search(c["text"])]
+    found = [c for c in corpus if has_code(code, c["text"])]
     if not found:
         return f"{code} does not appear in these policies."
     # Code tables first. A number can also turn up in a study or a reference list.
@@ -467,6 +472,79 @@ def get_policy(policy: str, section: str, corpus: list[dict]) -> str:
             )
         out += piece
     return out
+
+
+REQUESTS_DIR = Path(__file__).parent / "requests"  # approved drafts. Not in git.
+SOURCE = re.compile(r"\[([\w.-]+\.pdf) p\.([1-9][0-9]{0,3})\]", re.ASCII)
+
+
+def draft_prior_auth(args: dict, corpus: list[dict]) -> str:
+    """The text of a prior-authorization request, built from what the model found. Saves nothing.
+
+    Each part is checked against the chunks: the policy must exist, each code must appear
+    in it, and each requirement must cite a page of it. A ValueError carries a message for
+    the model. The draft has no field for a patient, and each free-text part is kept to
+    one line so it cannot add lines of its own. Keeping patient details out of that text
+    is left to the system prompt.
+    """
+    chunks = [c for c in corpus if c["file"] == args.get("policy")]
+    if not chunks:
+        files = ", ".join(sorted({c["file"] for c in corpus}))
+        raise ValueError(f"policy must be one of these file names: {files}")
+    service = args.get("service")
+    if not isinstance(service, str) or not service.strip():
+        raise ValueError("service must say which procedure or service is being requested.")
+    codes = args.get("codes") or []
+    if not isinstance(codes, list) or not all(isinstance(code, str) for code in codes):
+        raise ValueError("codes must be a list of billing codes.")
+    codes = [code.strip().upper() for code in codes]
+    for code in codes:
+        if not code or not any(has_code(code, c["text"]) for c in chunks):
+            raise ValueError(f"code {code!r} is not in {args['policy']}. Check it with lookup_code.")
+    requirements = args.get("requirements")
+    if not isinstance(requirements, list) or not requirements:
+        raise ValueError("requirements must list at least one thing the policy asks for.")
+    pages = {c["page"] for c in chunks}
+    lines = []
+    for number, item in enumerate(requirements, start=1):
+        text = item.get("text") if isinstance(item, dict) else None
+        source = SOURCE.fullmatch(str(item.get("source", "")).strip()) if text else None
+        if not isinstance(text, str) or not text.strip() or not source:
+            raise ValueError(
+                f"requirement {number} needs a text and a source such as [{args['policy']} p.2]."
+            )
+        if source[1] != args["policy"] or int(source[2]) not in pages:
+            raise ValueError(f"requirement {number} cites {source[0]}, which is not a page of this policy.")
+        lines.append(f"{number}. {' '.join(text.split())} {source[0]}")
+    first = chunks[0]
+    return "\n".join(
+        [
+            "PRIOR AUTHORIZATION REQUEST (DRAFT)",
+            f"Policy: {first['title']} ({first['payer']}), policy {first['policy_number']}, "
+            f"effective {first['effective_date']}",
+            f"Service requested: {' '.join(service.split())}",
+            f"Billing codes: {', '.join(codes) or 'none given'}",
+            "",
+            "What the policy asks for, to be documented by the provider:",
+            *lines,
+            "",
+            "Patient and provider details: to be filled in by the provider's office.",
+            "Check every line against the policy before sending.",
+        ]
+    )
+
+
+def save_request(text: str) -> Path:
+    """Write an approved draft to requests/ and return where it went."""
+    REQUESTS_DIR.mkdir(exist_ok=True)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    path = REQUESTS_DIR / f"prior-auth-{stamp}.txt"
+    count = 1
+    while path.exists():  # a second draft in the same second must not replace the first
+        count += 1
+        path = REQUESTS_DIR / f"prior-auth-{stamp}-{count}.txt"
+    path.write_text(text + "\n")
+    return path
 
 
 EMBED_MODEL = "voyage-4"
@@ -590,6 +668,41 @@ TOOLS = [
             "required": ["policy"],
         },
     },
+    {
+        "name": "draft_prior_auth",
+        "description": "Draft a prior-authorization request for one service under one policy, for the user to approve. Use it only when the user asks for a request to be drafted, and only after you have read the policy's requirements. The user is shown the draft and decides whether it is saved: nothing is saved without their approval. The draft has no patient details and you must not add any.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "policy": {
+                    "type": "string",
+                    "description": "The policy's exact file name, for example uhc-bariatric-surgery.pdf.",
+                },
+                "service": {
+                    "type": "string",
+                    "description": "The procedure or service being requested.",
+                },
+                "codes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Billing codes for the service. Each must appear in the policy.",
+                },
+                "requirements": {
+                    "type": "array",
+                    "description": "Everything the policy says must be met or documented for this service, one item each.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "text": {"type": "string", "description": "One requirement, in the policy's terms."},
+                            "source": {"type": "string", "description": "The tag of the page it is on, for example [uhc-bariatric-surgery.pdf p.2]."},
+                        },
+                        "required": ["text", "source"],
+                    },
+                },
+            },
+            "required": ["policy", "service", "requirements"],
+        },
+    },
 ]
 
 SYSTEM = """\
@@ -607,6 +720,11 @@ How to answer
 - Say only what the chunks say. Don't add a billing code, a rule, or a contrast with a case the question didn't ask about unless a chunk states it.
 - Cite every claim with the exact tag that heads its chunk, for example [uhc-example-policy.pdf p.3]. Never write the word 'file' in a citation.
 - A file whose name ends in -scan was read by OCR, which can misread a character. If it disagrees with another copy of the same policy, go with the other copy and don't report the difference as a second policy.
+
+Drafting a request
+- Only when the user asks you to draft a prior-authorization request, use draft_prior_auth. First read the policy's requirements for that service with get_policy, then put every one of them in the draft with the page it is on.
+- The user decides whether the draft is saved. Tell them what happened: saved and where, or not saved.
+- Never put a patient's name, date of birth, member number or medical details in a draft, even if the user gives them. Those are filled in by the provider's office.
 
 When the policies don't answer
 - If the question is about another insurer, say you only have UnitedHealthcare policies and stop. Don't answer from UnitedHealthcare policy instead.
@@ -650,18 +768,39 @@ MAX_TURNS = 6
 MAX_TOKENS = 2048  # output cap for one model call. The model's thinking counts toward it.
 
 
-def run_tool(block, corpus: list[dict], db: sqlite3.Connection, vectors: list[list[float]]) -> dict:
+def run_tool(
+    block, corpus: list[dict], db: sqlite3.Connection, vectors: list[list[float]], approve=None
+) -> dict:
     """Run one tool call and wrap what it returns as a tool_result.
 
     A bad request from the model, or a search service that is still down after the
     retries, goes back to the model as an error result. It can then fix its request,
     search again or say it could not look. The details are printed here and not shown
     to the model.
+
+    draft_prior_auth is the one tool that changes anything, and only after approve(text)
+    returns True. With no approve function the draft is never saved.
     """
     result = {"type": "tool_result", "tool_use_id": block.id}
     schema = next((t["input_schema"] for t in TOOLS if t["name"] == block.name), None)
     if schema is None:
         return {**result, "content": f"There is no tool named {block.name}.", "is_error": True}
+    if block.name == "draft_prior_auth":
+        try:
+            text = draft_prior_auth(block.input, corpus)
+        except ValueError as e:
+            return {**result, "content": f"The draft was not accepted: {e}", "is_error": True}
+        if approve is None:
+            content = "No one is here to approve the draft, so it was not saved. Show it to the user."
+        elif approve(text) is True:  # nothing but a plain yes saves
+            try:
+                content = f"The user approved the draft. It was saved to requests/{save_request(text).name}."
+            except OSError as e:
+                print(f"  save error: {type(e).__name__}: {e}")
+                content = "The user approved the draft, but it could not be saved."
+        else:
+            content = "The user declined the draft. Nothing was saved."
+        return {**result, "content": f"{content}\n\n{text}"}
     args = {name: block.input.get(name) for name in schema["properties"]}
     for name, value in args.items():
         if value is None and name not in schema["required"]:
@@ -680,9 +819,22 @@ def run_tool(block, corpus: list[dict], db: sqlite3.Connection, vectors: list[li
         return {**result, "content": "The search failed. Try once more.", "is_error": True}
 
 
-def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> dict:
+def ask_to_save(text: str) -> bool:
+    """Show a draft in the terminal and ask whether to save it. Anything but y or yes is a no."""
+    print(f"\n{text}\n")
+    try:
+        return input("Save this request? [y/N] ").strip().lower() in ("y", "yes")
+    except EOFError:  # no one at the keyboard
+        return False
+
+
+def run_agent(
+    question: str, corpus: list[dict], vectors: list[list[float]], approve=None
+) -> dict:
     """Answer one question. Returns the answer with its model calls, tokens, cost and time.
 
+    approve is called with the text of a drafted request and returns whether to save it.
+    Left out, as in the eval runs, nothing is ever saved.
     The cost covers the Claude calls only. Voyage search calls are not counted.
     """
     client = anthropic.Anthropic(max_retries=RETRIES, timeout=TIMEOUT)
@@ -728,7 +880,7 @@ def run_agent(question: str, corpus: list[dict], vectors: list[list[float]]) -> 
         for block in response.content:
             if block.type == "tool_use":
                 print(f"  -> {block.name}({block.input})")
-                results.append(run_tool(block, corpus, db, vectors))
+                results.append(run_tool(block, corpus, db, vectors, approve))
         messages.append({"role": "user", "content": results})
 
     return {
@@ -758,6 +910,6 @@ if __name__ == "__main__":
         or "Does UHC cover bilateral cochlear implants for adults?"
     )
     corpus, vectors = load_index()
-    run = run_agent(question, corpus, vectors)
+    run = run_agent(question, corpus, vectors, approve=ask_to_save)
     print(run["answer"])
     print(usage_line(run))

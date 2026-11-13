@@ -6,3 +6,4 @@ index.tmp
 meta.json
 .env
 .DS_Store
+requests/

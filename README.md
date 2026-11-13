@@ -2,7 +2,7 @@
 
 Ask a question about a health insurer's medical policy and get an answer with the file and page it came from.
 
-Insurance policies are long PDFs with the useful part buried under headings, tables and billing codes. fineprint pulls a handful of public UnitedHealthcare commercial policies, cuts them into chunks that keep their heading and page number, and gives Claude three tools: `search_policies`, `lookup_code` for billing codes, and `get_policy` to read a whole section. The model searches, reads what comes back, and answers with a `[file.pdf p.N]` tag on every claim. The system prompt tells it to say so when the chunks don't answer the question.
+Insurance policies are long PDFs with the useful part buried under headings, tables and billing codes. fineprint pulls a handful of public UnitedHealthcare commercial policies, cuts them into chunks that keep their heading and page number, and gives Claude three tools for reading them: `search_policies`, `lookup_code` for billing codes, and `get_policy` to read a whole section. The model searches, reads what comes back, and answers with a `[file.pdf p.N]` tag on every claim. A fourth tool, `draft_prior_auth`, drafts a prior-authorization request and saves it only if you approve it. The system prompt tells it to say so when the chunks don't answer the question.
 
 ```sh
 uv sync
@@ -32,6 +32,12 @@ Two searches run on every query and their results are fused:
 The top 20 from each are merged with reciprocal rank fusion, then Voyage `rerank-3` picks the final 3 chunks the model sees. Each chunk comes with its policy's title, number and effective date. `lookup_code` finds every chunk that mentions a billing code or modifier by plain text matching and returns them with code tables first. It calls no API.
 
 `get_policy` returns one whole section of one policy in page order, such as its Coverage Rationale, up to 10,000 characters. Search hands the model three chunks, which can be only part of a list of criteria, so the prompt tells it to read the full section when an answer depends on every condition. With no section named it lists the policy's sections.
+
+`draft_prior_auth` is the one tool that changes anything. Asked to draft a prior-authorization request, the model reads the policy's requirements and passes the tool the policy, the service, any billing codes, and each requirement with the page it is on. Code checks the draft before anyone sees it: the policy has to exist, each code has to appear in that policy, and each requirement has to cite a real page of it. A draft that fails goes back to the model with the reason. A draft that passes is printed, and you are asked whether to save it. Only `y` or `yes` writes it to `requests/`. In the eval runs there is no one to ask, so nothing is saved. The draft has no field for patient details, and the prompt tells the model to leave them out.
+
+```sh
+uv run fineprint.py "Draft a prior authorization request for sleeve gastrectomy"
+```
 
 The agent loop allows 6 model calls. On the sixth the model can no longer search and has to answer from what it has found. API calls time out after 60 seconds, and a failure that looks temporary, such as a rate limit, is retried up to 3 times. A search that still fails is reported to the model as an error, so it can try again or say it could not look. Every model call is marked for prompt caching, so the next call in the same question reads the part it repeats at a tenth of the input price.
 
