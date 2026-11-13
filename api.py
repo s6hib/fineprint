@@ -23,7 +23,16 @@ RATE_WINDOW = 60  # ... in this many seconds
 # The most the model calls may cost in one UTC day. Set FINEPRINT_DAILY_CAP_USD to change it.
 DAILY_CAP_USD = float(os.environ.get("FINEPRINT_DAILY_CAP_USD", "0.10"))
 
-budget = Budget(Path(__file__).parent / "spend.json", DAILY_CAP_USD)
+# Where the day's spending total is kept. On a host that replaces the app's folder at
+# every deploy, point FINEPRINT_STATE_DIR at a disk that stays.
+STATE_DIR = Path(os.environ.get("FINEPRINT_STATE_DIR") or Path(__file__).parent)
+
+# Behind a host's proxy every connection comes from the proxy, so the caller's address
+# has to be read from a header the proxy sets. FINEPRINT_CLIENT_IP_HEADER names it.
+# Leave it unset when the app is reached directly: a caller can put anything in a header.
+CLIENT_IP_HEADER = os.environ.get("FINEPRINT_CLIENT_IP_HEADER", "")
+
+budget = Budget(STATE_DIR / "spend.json", DAILY_CAP_USD)
 rate = RateLimit(RATE_LIMIT, RATE_WINDOW)
 waiting = Waiting()
 
@@ -120,6 +129,8 @@ async def guard_posts(request: Request, call_next):
     """
     if request.method == "POST":
         address = request.client.host if request.client else "unknown"
+        if CLIENT_IP_HEADER:
+            address = request.headers.get(CLIENT_IP_HEADER) or address
         if not rate.allow(address):
             return JSONResponse(
                 {"detail": "Too many requests. Wait a minute and try again."},

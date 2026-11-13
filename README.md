@@ -22,6 +22,12 @@ make serve    # the API and the page on http://127.0.0.1:8000
 
 `api.py` puts the agent behind one endpoint, `POST /ask`, and serves the page. The page (`web/`, React and TypeScript) sends the question, shows the answer, and draws each citation the API confirmed as a tag. A citation is confirmed only if a chunk in the index carries that file and page. Clicking a tag opens a panel with that page's text as the index holds it and a link to the policy on uhcprovider.com. The PDFs themselves are not served. When the agent drafts a prior-authorization request, the API holds the draft in memory for 15 minutes and the page shows it with Approve and Decline buttons. The draft is written to `requests/` only after an approve. Three limits are checked before the model is called: a daily spending cap (`FINEPRINT_DAILY_CAP_USD`, default $0.10), 5 questions a minute per address, and a request size of 8,000 bytes.
 
+### Deploy
+
+The `Dockerfile` builds the page, installs the locked Python packages and copies in the code, the PDFs and the saved `index.json`. The build stops if that index does not match the files, so a deployed app never re-embeds on its own. `fly.toml` runs the image on Fly.io as one always-on machine with 512 MB of memory and a 1 GB disk for the day's spending total. Approved requests are written next to the code, which Fly replaces at every deploy, so they do not outlive one.
+
+Two settings matter on any host. `FINEPRINT_STATE_DIR` says where `spend.json` is kept, and `FINEPRINT_CLIENT_IP_HEADER` names the header the host's proxy puts the caller's address in (`fly-client-ip` on Fly). Without the second one every caller shares the proxy's address and the rate limit counts them as one.
+
 ## How a PDF becomes chunks
 
 - Page 1 of each policy goes to the model once (the result is saved in `meta.json`), which returns the payer, title, policy number and effective date as a typed `PolicyMeta` object. That line is prepended to every chunk so a chunk still says which policy it belongs to.
@@ -105,8 +111,10 @@ uv run citations.py
 | `citations.py` | checks the citations and quotes in the answers |
 | `judge.py` | grades answers with a separate model call, and scores that judge against the labels |
 | `judgments.jsonl` | the judge's verdicts on the 44 labeled answers it was scored on |
-| `api.py` | the HTTP API: `POST /ask`, and the built web page at `/` |
+| `api.py` | the HTTP API: `POST /ask`, approve and decline for drafts, and the built web page at `/` |
 | `limits.py` | the daily spending cap and the per-address rate limit |
+| `drafts.py` | drafted requests that wait for an approve or decline |
+| `Dockerfile`, `fly.toml` | the image and the Fly.io settings for the deployed demo |
 | `web/` | the web page (React, TypeScript, Vite) |
 | `Makefile` | `make eval`, `make answers`, `make grade`, `make serve` and `make web` |
 | `fetch_data.sh` | downloads the policy PDFs into `data/` (git-ignored) |

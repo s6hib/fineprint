@@ -1,0 +1,34 @@
+# Fly.io settings for the demo. `fly launch --no-deploy --copy-config --ha=false`
+# creates the app from this file; `fly deploy` builds the Dockerfile and starts it.
+app = "fineprint"
+primary_region = "iad"
+
+[env]
+  FINEPRINT_STATE_DIR = "/state"
+  FINEPRINT_CLIENT_IP_HEADER = "fly-client-ip"
+
+# One machine, always on. The rate limit and the drafts waiting for a yes or no are
+# kept in memory, so a second machine would not see them and a stopped one forgets them.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = false
+
+  [[http_service.checks]]
+    method = "GET"
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "30s"
+
+# The app peaks at about 215 MB of memory with the index loaded.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# A small disk for spend.json, so a deploy or restart does not reset the day's total.
+[mounts]
+  source = "fineprint_state"
+  destination = "/state"
+  initial_size = "1gb"

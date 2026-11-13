@@ -1,0 +1,15 @@
+# Send the build only what the Dockerfile copies. Everything else stays on this
+# machine, the keys in .env above all.
+*
+!api.py
+!drafts.py
+!fineprint.py
+!limits.py
+!pyproject.toml
+!uv.lock
+!index.json
+!meta.json
+!data/
+!web/
+web/node_modules
+web/dist
