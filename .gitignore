@@ -7,3 +7,5 @@ meta.json
 .env
 .DS_Store
 requests/
+spend.json
+spend.tmp
