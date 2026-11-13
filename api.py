@@ -6,6 +6,7 @@ from typing import Annotated
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, StringConstraints, field_validator
 
 from fineprint import SOURCE, load_index, run_agent
@@ -139,3 +140,10 @@ def ask(body: Question, request: Request) -> Answer:
         cost_usd=run["cost_usd"],
         seconds=run["seconds"],
     )
+
+
+# The built web page, when there is one (`make web`). Mounted last, so the routes above
+# are matched first and everything else is looked up as a file in web/dist.
+WEB_DIR = Path(__file__).parent / "web" / "dist"
+if WEB_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

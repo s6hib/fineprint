@@ -13,6 +13,15 @@ uv run fineprint.py "Does UHC cover bilateral cochlear implants for adults?"
 
 The first run parses and embeds the PDFs and saves the result to `index.json`. Later runs read that file. When a PDF, `fineprint.py` or `uv.lock` changes, the chunks are cut again, but only chunks whose text is new are embedded.
 
+## Web app
+
+```sh
+make web      # build the page into web/dist (needs Node)
+make serve    # the API and the page on http://127.0.0.1:8000
+```
+
+`api.py` puts the agent behind one endpoint, `POST /ask`, and serves the page. The page (`web/`, React and TypeScript) sends the question, shows the answer, and draws each citation the API confirmed as a tag. A citation is confirmed only if a chunk in the index carries that file and page. Three limits are checked before the model is called: a daily spending cap (`FINEPRINT_DAILY_CAP_USD`, default $0.10), 5 questions a minute per address, and a request size of 8,000 bytes.
+
 ## How a PDF becomes chunks
 
 - Page 1 of each policy goes to the model once (the result is saved in `meta.json`), which returns the payer, title, policy number and effective date as a typed `PolicyMeta` object. That line is prepended to every chunk so a chunk still says which policy it belongs to.
@@ -96,5 +105,8 @@ uv run citations.py
 | `citations.py` | checks the citations and quotes in the answers |
 | `judge.py` | grades answers with a separate model call, and scores that judge against the labels |
 | `judgments.jsonl` | the judge's verdicts on the 44 labeled answers it was scored on |
-| `Makefile` | `make eval`, `make answers` and `make grade` |
+| `api.py` | the HTTP API: `POST /ask`, and the built web page at `/` |
+| `limits.py` | the daily spending cap and the per-address rate limit |
+| `web/` | the web page (React, TypeScript, Vite) |
+| `Makefile` | `make eval`, `make answers`, `make grade`, `make serve` and `make web` |
 | `fetch_data.sh` | downloads the policy PDFs into `data/` (git-ignored) |
