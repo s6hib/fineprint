@@ -62,6 +62,12 @@ uv run judge.py
 `judge.py` grades the answers with a separate model call. Six labeled answers go to the judge as examples, and it is scored on the other 44: how many passing answers it keeps and how many failing answers it catches. For each answer the judge sees the question, the reference answer, and the text of the pages the reference comes from and the pages the answer cites. Its verdicts go to `judgments.jsonl`. The rubric and examples are the same for every case, so they are cached: after the first call the rest read them at a tenth of the input price, and the run prints what it cost.
 
 ```sh
+uv run judge.py --cli
+```
+
+With `--cli` the same rubric and cases go to a bigger model, Sonnet 5.5, through the Claude Code CLI (`claude -p`). The CLI uses whatever account it is signed in to, so with a Claude subscription login that run is not billed to the API key. The script removes the key from the CLI's environment and stops if the CLI reports it is using one. It needs `claude` on your PATH, or `CLAUDE_BIN` set to it.
+
+```sh
 uv run citations.py
 ```
 
